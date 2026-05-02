@@ -336,7 +336,6 @@ function App() {
   const [formatMenu, setFormatMenu] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
-  const [openMenu, setOpenMenu] = useState("");
   const folderInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
@@ -368,10 +367,7 @@ function App() {
   }, [rows]);
 
   useEffect(() => {
-    const closeMenu = () => {
-      setFormatMenu(null);
-      setOpenMenu("");
-    };
+    const closeMenu = () => setFormatMenu(null);
     window.addEventListener("click", closeMenu);
     window.addEventListener("keydown", closeMenu);
     return () => {
@@ -614,16 +610,6 @@ function App() {
     setStatus("Entry saved.");
   }
 
-  function chooseCopy(kind) {
-    copySelection(kind);
-    setOpenMenu("");
-  }
-
-  function chooseAccuracy(value) {
-    updateSelected("Accuracy", value);
-    setOpenMenu("");
-  }
-
   useEffect(() => {
     const onKeyDown = (event) => {
       const tagName = event.target?.tagName;
@@ -654,19 +640,15 @@ function App() {
           <button onClick={exportCsv} disabled={!rows.length}>CSV</button>
           <label className="check compact-check" title="Wrap Text"><input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} /> W</label>
           <input className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
-          <div className="dropdown">
-            <button disabled={!selectedRows.length} onClick={(event) => {
-              event.stopPropagation();
-              setOpenMenu(openMenu === "copy" ? "" : "copy");
-            }}>Copy</button>
-            {openMenu === "copy" && (
-              <div className="dropdown-menu">
-                <button onClick={() => chooseCopy("bibliography")}>Bibliography</button>
-                <button onClick={() => chooseCopy("filename")}>Filename</button>
-                <button onClick={() => chooseCopy("entry")}>Entry</button>
-              </div>
-            )}
-          </div>
+          <select className="copy-select" disabled={!selectedRows.length} defaultValue="" onChange={(event) => {
+            copySelection(event.target.value);
+            event.target.value = "";
+          }}>
+            <option value="">Copy</option>
+            <option value="bibliography">Bibliography</option>
+            <option value="filename">Filename</option>
+            <option value="entry">Entry</option>
+          </select>
           <button className="icon" title={isDark ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setIsDark(!isDark)}>
             {isDark ? "Light" : "Dark"}
           </button>
@@ -724,21 +706,11 @@ function App() {
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
                   {column === "Accuracy" ? (
-                    <div className="dropdown field-dropdown">
-                      <button disabled={selected.Locked} onClick={(event) => {
-                        event.stopPropagation();
-                        setOpenMenu(openMenu === "accuracy" ? "" : "accuracy");
-                      }}>{selected[column] || "Not Set"}</button>
-                      {openMenu === "accuracy" && (
-                        <div className="dropdown-menu">
-                          {ACCURACY_OPTIONS.map((option) => (
-                            <button key={option || "not-set"} className={(selected[column] || "") === option ? "active-option" : ""} onClick={() => chooseAccuracy(option)}>
-                              {option || "Not Set"}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <select value={selected[column] || ""} disabled={selected.Locked} onChange={(event) => updateSelected(column, event.target.value)}>
+                      {ACCURACY_OPTIONS.map((option) => (
+                        <option key={option} value={option}>{option || "Not Set"}</option>
+                      ))}
+                    </select>
                   ) : (
                     <input value={selected[column] || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
