@@ -49,4 +49,5 @@ src-tauri\target\release\bundle\nsis\
 
 <img width="1449" height="785" alt="Light-ArchiveStudio-Screenshot-Tauri" src="https://github.com/user-attachments/assets/4982eee7-969f-45d8-a34e-724ade994116" />
 <img width="1449" height="785" alt="Dark-ArchiveStudio-Screenshot-Tauri" src="https://github.com/user-attachments/assets/78d5af81-c247-4fa5-9bab-a20b6d76bf0f" />
+<img width="2502" height="1546" alt="image" src="https://github.com/user-attachments/assets/3c3caf70-55de-4276-835e-b10261024c05" />
 
