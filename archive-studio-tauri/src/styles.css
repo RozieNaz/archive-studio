@@ -122,6 +122,13 @@ p {
   cursor: not-allowed;
 }
 
+.actions .danger {
+  border-color: #c9796b;
+  background: #d98a7a;
+  min-width: 48px;
+  padding: 0 8px;
+}
+
 .copy-select {
   appearance: auto;
   width: auto;
@@ -252,6 +259,15 @@ p {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.row.locked {
+  color: var(--muted);
+}
+
+.row.locked span:first-child::before {
+  content: "Locked ";
+  font-weight: 800;
+}
+
 .row span {
   padding: 5px 7px;
   min-width: 0;
@@ -317,6 +333,13 @@ select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(143, 150, 101, 0.18);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
 }
 
 textarea {
