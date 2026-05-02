@@ -6,6 +6,7 @@ const COLUMNS = ["Title", "Author", "DOI", "ISBN", "Suggested Filename", "Biblio
 const NOTE_FIELD = "Notes";
 const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
 const SORTABLE_COLUMNS = new Set(["Title", "Author", "Accuracy"]);
+const ACCURACY_RANK = { Zero: 0, Low: 1, Medium: 2, High: 3 };
 const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt"]);
 const DEFAULT_WIDTHS = [170, 140, 130, 130, 205, 290, 105];
 const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
@@ -61,6 +62,7 @@ function makeRow(file) {
     Bibliography: "",
     Accuracy: "",
     Notes: "",
+    Locked: false,
   };
 }
 
@@ -69,6 +71,7 @@ function normaliseSavedRows(savedRows) {
     ...row,
     Accuracy: row.Accuracy || row.Confidence || "",
     Notes: row.Notes || "",
+    Locked: Boolean(row.Locked),
     Confidence: undefined,
   }));
 }
@@ -270,6 +273,7 @@ function App() {
   const tableWidth = colWidths.reduce((sum, width) => sum + width, 0);
   const selectedRows = selectedIndexes.map((index) => rows[index]).filter(Boolean);
   const selected = selectedIndexes.length === 1 ? selectedRows[0] : null;
+  const selectedLocked = selectedRows.length > 0 && selectedRows.every((row) => row.Locked);
   const counts = useMemo(() => {
     const total = rows.length;
     const done = rows.filter((row) => row.Accuracy).length;
@@ -339,10 +343,16 @@ function App() {
 
   function sortBy(column) {
     if (!SORTABLE_COLUMNS.has(column)) return;
-    const direction = sortConfig.column === column && sortConfig.direction === "asc" ? "desc" : "asc";
+    const direction =
+      sortConfig.column === column
+        ? sortConfig.direction === "asc" ? "desc" : "asc"
+        : column === "Accuracy" ? "desc" : "asc";
     setRows((current) =>
       [...current].sort((left, right) => {
-        const a = String(left[column] || "").localeCompare(String(right[column] || ""), undefined, { sensitivity: "base" });
+        const a =
+          column === "Accuracy"
+            ? (ACCURACY_RANK[left[column]] ?? -1) - (ACCURACY_RANK[right[column]] ?? -1)
+            : String(left[column] || "").localeCompare(String(right[column] || ""), undefined, { sensitivity: "base" });
         return direction === "asc" ? a : -a;
       })
     );
@@ -385,6 +395,7 @@ function App() {
   function updateSelected(field, value) {
     if (selectedIndexes.length !== 1) return;
     const selectedIndex = selectedIndexes[0];
+    if (rows[selectedIndex]?.Locked) return;
     setRows((current) =>
       current.map((row, index) =>
         index === selectedIndex
@@ -412,6 +423,7 @@ function App() {
   function applyFormat(marker) {
     if (!formatMenu || selectedIndexes.length !== 1) return;
     const selectedIndex = selectedIndexes[0];
+    if (rows[selectedIndex]?.Locked) return;
     const field = formatMenu.field;
     setRows((current) =>
       current.map((row, index) => {
@@ -458,9 +470,32 @@ function App() {
     if (!selectedIndexes.length) return;
     stopFetch.current = true;
     const remove = new Set(selectedIndexes);
-    setRows((current) => current.filter((_, index) => !remove.has(index)));
+    const lockedCount = selectedRows.filter((row) => row.Locked).length;
+    setRows((current) => current.filter((row, index) => row.Locked || !remove.has(index)));
     setSelectedIndexes([]);
-    setStatus(`Deleted ${selectedIndexes.length} entr${selectedIndexes.length === 1 ? "y" : "ies"}.`);
+    const deletedCount = selectedIndexes.length - lockedCount;
+    setStatus(`Deleted ${deletedCount} entr${deletedCount === 1 ? "y" : "ies"}.`);
+  }
+
+  function toggleSelectedLocks() {
+    if (!selectedIndexes.length) return;
+    const selectedSet = new Set(selectedIndexes);
+    const nextLocked = !selectedLocked;
+    setRows((current) =>
+      current.map((row, index) => (selectedSet.has(index) ? { ...row, Locked: nextLocked } : row))
+    );
+    setStatus(`${nextLocked ? "Locked" : "Unlocked"} ${selectedIndexes.length} entr${selectedIndexes.length === 1 ? "y" : "ies"}.`);
+  }
+
+  function clearUnlockedEntries() {
+    if (!rows.length) return;
+    if (!window.confirm("Clear all entries? Locked entries will stay.")) return;
+    const lockedRows = rows.filter((row) => row.Locked);
+    const removed = rows.length - lockedRows.length;
+    stopFetch.current = true;
+    setRows(lockedRows);
+    setSelectedIndexes([]);
+    setStatus(`Cleared ${removed} entr${removed === 1 ? "y" : "ies"}.`);
   }
 
   async function openProject(file) {
@@ -475,6 +510,19 @@ function App() {
     setStatus("Entry saved.");
   }
 
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const tagName = event.target?.tagName;
+      if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
+      if (event.key === "Delete" && selectedIndexes.length) {
+        event.preventDefault();
+        deleteSelectedEntries();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedIndexes, rows]);
+
   return (
     <main className={isDark ? "app dark" : "app"}>
       <header className="topbar">
@@ -487,6 +535,7 @@ function App() {
           <button onClick={fetchMetadata} disabled={!rows.length || isFetching}>{isFetching ? "Fetching" : "Fetch"}</button>
           <button onClick={stopCurrentJob} disabled={!isFetching}>Stop</button>
           <button onClick={saveProject} disabled={!rows.length}>Save</button>
+          <button onClick={toggleSelectedLocks} disabled={!selectedRows.length}>{selectedLocked ? "Unlock" : "Lock"}</button>
           <button onClick={deleteSelectedEntries} disabled={!selectedRows.length}>Delete</button>
           <button onClick={() => downloadText("metadata-log.csv", toCsv(rows), "text/csv")} disabled={!rows.length}>CSV</button>
           <label className="check"><input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} /> Wrap</label>
@@ -502,6 +551,7 @@ function App() {
           <button className="icon" title={isDark ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setIsDark(!isDark)}>
             {isDark ? "Light" : "Dark"}
           </button>
+          <button className="danger" onClick={clearUnlockedEntries} disabled={!rows.length}>Clear</button>
         </div>
         <input ref={folderInput} hidden type="file" webkitdirectory="true" multiple onChange={(event) => scanFiles(event.target.files)} />
         <input ref={projectInput} hidden type="file" accept=".json,.archive-studio.json" onChange={(event) => event.target.files?.[0] && openProject(event.target.files[0])} />
@@ -516,7 +566,11 @@ function App() {
                   if (!event.target.classList.contains("resize-handle")) sortBy(column);
                 }}>
                   {column}
-                  {sortConfig.column === column && <span className="sort-mark">{sortConfig.direction === "asc" ? "A-Z" : "Z-A"}</span>}
+                  {sortConfig.column === column && (
+                    <span className="sort-mark">
+                      {column === "Accuracy" ? (sortConfig.direction === "asc" ? "Worst" : "Best") : sortConfig.direction === "asc" ? "A-Z" : "Z-A"}
+                    </span>
+                  )}
                   <span className="resize-handle" onMouseDown={(event) => beginResize(index, event)} />
                 </strong>
               ))}
@@ -526,7 +580,7 @@ function App() {
                 <div className="empty">Choose a folder to scan academic files.</div>
               ) : (
                 rows.map((row, index) => (
-                  <button key={`${row.Filename}-${index}`} className={selectedIndexes.includes(index) ? "grid row selected" : "grid row"} style={{ gridTemplateColumns, minWidth: tableWidth }} onClick={(event) => selectRow(index, event)}>
+                  <button key={`${row.Filename}-${index}`} className={`${selectedIndexes.includes(index) ? "grid row selected" : "grid row"}${row.Locked ? " locked" : ""}`} style={{ gridTemplateColumns, minWidth: tableWidth }} onClick={(event) => selectRow(index, event)}>
                     {COLUMNS.map((column) => <span key={column}>{renderFormattedText(row[column])}</span>)}
                   </button>
                 ))
@@ -537,31 +591,31 @@ function App() {
 
         {selected && (
           <aside className="editor">
-            <h2>Selected Entry</h2>
+            <h2>Selected Entry {selected.Locked ? "(Locked)" : ""}</h2>
             {COLUMNS.map((column) => (
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{column}</span>
-                  <textarea value={selected[column] || ""} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                  <textarea value={selected[column] || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                 </label>
               ) : (
                 <label key={column}>
                   <span>{column}</span>
                   {column === "Accuracy" ? (
-                    <select value={selected[column] || ""} onChange={(event) => updateSelected(column, event.target.value)}>
+                    <select value={selected[column] || ""} disabled={selected.Locked} onChange={(event) => updateSelected(column, event.target.value)}>
                       {ACCURACY_OPTIONS.map((option) => (
                         <option key={option} value={option}>{option || "Not Set"}</option>
                       ))}
                     </select>
                   ) : (
-                    <input value={selected[column] || ""} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={selected[column] || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )
             ))}
             <label>
               <span>Notes</span>
-              <textarea value={selected.Notes || ""} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
+              <textarea value={selected.Notes || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
             </label>
             <button className="done-button" onClick={closeSelectedEntry}>Done</button>
           </aside>
