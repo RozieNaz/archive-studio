@@ -13,6 +13,7 @@ const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
 const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
 const STORAGE_KEY = "archive-studio-project";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
+const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
 
 function cleanFilename(name) {
   return titleCase(
@@ -32,7 +33,8 @@ function cleanFilename(name) {
 
 function cleanSearchQuery(value) {
   return cleanFilename(value)
-    .replace(/\b(second|third|fourth|fifth|edition|edn|vol|volume)\b/gi, " ")
+    .replace(/\b(second|third|fourth|fifth|edition|edn)\b/gi, " ")
+    .replace(/\bvol\.?\s*(\d+|[ivxlcdm]+)\b/gi, "volume $1")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -93,6 +95,33 @@ function toCsv(rows) {
 
 function rowToText(row) {
   return EXPORT_COLUMNS.map((column) => `${column}: ${row[column] || ""}`).join("\n");
+}
+
+function romanToNumber(value) {
+  const roman = String(value || "").toUpperCase();
+  const map = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+  let total = 0;
+  for (let index = 0; index < roman.length; index += 1) {
+    const current = map[roman[index]] || 0;
+    const next = map[roman[index + 1]] || 0;
+    total += current < next ? -current : current;
+  }
+  return total ? String(total) : "";
+}
+
+function extractVolume(value) {
+  const text = String(value || "").toLowerCase();
+  const match = text.match(/\b(?:vol(?:ume)?\.?|v\.?)\s*(\d+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i);
+  if (!match) return "";
+  const raw = match[1].toLowerCase();
+  if (/^\d+$/.test(raw)) return raw;
+  if (NUMBER_WORDS[raw]) return NUMBER_WORDS[raw];
+  return romanToNumber(raw);
+}
+
+function volumeLabel(value) {
+  const volume = extractVolume(value);
+  return volume ? `Volume ${volume}` : "";
 }
 
 function renderFormattedText(value) {
@@ -213,14 +242,18 @@ async function searchCrossref(query) {
 }
 
 function chooseBest(filename, query, candidates) {
+  const fileVolume = extractVolume(filename);
   const scored = candidates
     .filter((item) => item.title)
     .map((item) => {
       let score = tokenOverlap(query || filename, item.title) * 60;
+      const candidateVolume = extractVolume(item.title);
       if (item.author && tokenOverlap(filename, item.author) > 0) score += 15;
       if (item.isbn) score += 8;
       if (item.doi) score += 5;
       if (item.year && filename.includes(String(item.year))) score += 8;
+      if (fileVolume && candidateVolume && fileVolume === candidateVolume) score += 18;
+      if (fileVolume && candidateVolume && fileVolume !== candidateVolume) score -= 45;
       const accuracy = score >= 55 ? "High" : score >= 32 ? "Medium" : score >= 12 ? "Low" : "Zero";
       return { ...item, score, accuracy };
     })
@@ -242,14 +275,23 @@ async function fetchMetadataForRow(row) {
   }
   const best = chooseBest(row.Filename || "", query, candidates);
   if (!best) return { ...row, Accuracy: "Zero" };
-  const bibliography = makeBibliography(best);
+  const fileVolume = extractVolume(row.Filename || row["Suggested Filename"]);
+  const bestVolume = extractVolume(best.title);
+  let title = best.title;
+  if (fileVolume && bestVolume && fileVolume !== bestVolume) {
+    title = row.Filename || best.title;
+  } else if (fileVolume && !bestVolume) {
+    title = `${best.title}, ${volumeLabel(row.Filename || row["Suggested Filename"])}`;
+  }
+  const output = { ...best, title };
+  const bibliography = makeBibliography(output);
   return {
     ...row,
-    Title: titleCase(best.title),
+    Title: titleCase(output.title),
     Author: titleCase(best.author),
     DOI: best.doi,
     ISBN: best.isbn,
-    "Suggested Filename": makeSuggestedFilename(best),
+    "Suggested Filename": makeSuggestedFilename(output),
     Bibliography: bibliography,
     Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
   };
@@ -265,6 +307,7 @@ function App() {
   const [colWidths, setColWidths] = useState(DEFAULT_WIDTHS);
   const [sortConfig, setSortConfig] = useState({ column: "", direction: "asc" });
   const [formatMenu, setFormatMenu] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const folderInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
@@ -274,6 +317,15 @@ function App() {
   const selectedRows = selectedIndexes.map((index) => rows[index]).filter(Boolean);
   const selected = selectedIndexes.length === 1 ? selectedRows[0] : null;
   const selectedLocked = selectedRows.length > 0 && selectedRows.every((row) => row.Locked);
+  const visibleRows = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return rows.map((row, index) => ({ row, index }));
+    return rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) =>
+        [...EXPORT_COLUMNS, "Filename"].some((column) => String(row[column] || "").toLowerCase().includes(query))
+      );
+  }, [rows, searchQuery]);
   const counts = useMemo(() => {
     const total = rows.length;
     const done = rows.filter((row) => row.Accuracy).length;
@@ -538,7 +590,8 @@ function App() {
           <button onClick={toggleSelectedLocks} disabled={!selectedRows.length}>{selectedLocked ? "Unlock" : "Lock"}</button>
           <button onClick={deleteSelectedEntries} disabled={!selectedRows.length}>Delete</button>
           <button onClick={() => downloadText("metadata-log.csv", toCsv(rows), "text/csv")} disabled={!rows.length}>CSV</button>
-          <label className="check"><input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} /> Wrap</label>
+          <label className="check compact-check" title="Wrap text"><input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} /> W</label>
+          <input className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
           <select className="copy-select" disabled={!selectedRows.length} defaultValue="" onChange={(event) => {
             copySelection(event.target.value);
             event.target.value = "";
@@ -576,10 +629,10 @@ function App() {
               ))}
             </div>
             <div className="rows">
-              {rows.length === 0 ? (
-                <div className="empty">Choose a folder to scan academic files.</div>
+              {visibleRows.length === 0 ? (
+                <div className="empty">{rows.length ? "No entries match your search." : "Choose a folder to scan academic files."}</div>
               ) : (
-                rows.map((row, index) => (
+                visibleRows.map(({ row, index }) => (
                   <button key={`${row.Filename}-${index}`} className={`${selectedIndexes.includes(index) ? "grid row selected" : "grid row"}${row.Locked ? " locked" : ""}`} style={{ gridTemplateColumns, minWidth: tableWidth }} onClick={(event) => selectRow(index, event)}>
                     {COLUMNS.map((column) => <span key={column}>{renderFormattedText(row[column])}</span>)}
                   </button>
