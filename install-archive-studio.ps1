@@ -1,32 +1,24 @@
 param(
-    [string]$Url = "https://github.com/RozieNaz/archive-studio/releases/latest/download/ArchiveStudio.exe",
-    [string]$InstallDir = "$env:LOCALAPPDATA\ArchiveStudio"
+    [string]$Url = "https://github.com/RozieNaz/archive-studio/releases/latest/download/ArchiveStudio-Tauri-Setup.exe",
+    [string]$DownloadDir = "$env:TEMP\ArchiveStudio"
 )
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "Installing Archive Studio..."
 
-if (-not (Test-Path -LiteralPath $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir | Out-Null
+if (-not (Test-Path -LiteralPath $DownloadDir)) {
+    New-Item -ItemType Directory -Path $DownloadDir | Out-Null
 }
 
-$ExePath = Join-Path $InstallDir "ArchiveStudio.exe"
+$InstallerPath = Join-Path $DownloadDir "ArchiveStudio-Tauri-Setup.exe"
 
 Write-Host "Downloading from:"
 Write-Host $Url
 
-Invoke-WebRequest -Uri $Url -OutFile $ExePath
+Invoke-WebRequest -Uri $Url -OutFile $InstallerPath
 
-$ShortcutPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "Archive Studio.lnk"
-$Shell = New-Object -ComObject WScript.Shell
-$Shortcut = $Shell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = $ExePath
-$Shortcut.WorkingDirectory = $InstallDir
-$Shortcut.Save()
+Write-Host "Starting installer..."
+Start-Process -FilePath $InstallerPath -Wait
 
-Write-Host "Installed:"
-Write-Host $ExePath
-Write-Host "Desktop shortcut created."
-Write-Host "Run Archive Studio from your Desktop shortcut, or with:"
-Write-Host $ExePath
+Write-Host "Archive Studio installer finished."
