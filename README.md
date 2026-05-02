@@ -1,45 +1,36 @@
 # Archive Studio
 
-Archive Studio is a Windows desktop app for cleaning academic ebook/document filenames and building a metadata spreadsheet.
+Archive Studio is a Windows desktop app for organising academic document collections.
 
-It is designed for folder-sized archive work: dozens, hundreds, or thousands of files.
+It scans folders, cleans messy filenames, fetches public metadata, generates suggested filenames and bibliography entries, and exports the results to CSV.
 
-## Download Options
+## Download
 
-Archive Studio currently has two Windows options:
+Download the Windows installer from the [latest GitHub release](https://github.com/RozieNaz/archive-studio/releases/latest):
 
-| Option | Best For | Release File |
-| --- | --- | --- |
-| Tkinter version | Simple, classic Windows app | `ArchiveStudio.exe` |
-| Tauri version | Newer interface, smaller modern installer | `ArchiveStudio-Tauri-Setup.exe` |
-
-Download them from the [latest GitHub release](https://github.com/RozieNaz/archive-studio/releases/latest).
+```text
+ArchiveStudio-Tauri-Setup.exe
+```
 
 ## PowerShell Install
 
-Tkinter version:
-
 ```powershell
 irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archive-studio.ps1 | iex
-```
-
-Tauri version:
-
-```powershell
-irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archive-studio-tauri.ps1 | iex
 ```
 
 ## Features
 
 - Scan a local folder of PDF, EPUB, MOBI, AZW3, DJVU, DOC/DOCX, RTF, and TXT files.
 - Clean messy archive filenames.
-- Fetch metadata from public sources.
+- Fetch metadata from Google Books, Open Library, and Crossref.
 - Generate suggested filenames.
 - Generate bibliography entries.
 - Mark accuracy as High, Medium, Low, or Zero.
 - Manually edit title, author, DOI, ISBN, bibliography, suggested filename, and accuracy.
+- Delete selected entries.
 - Copy bibliography, suggested filename, or entire entries.
-- Export to CSV. The Tkinter version also supports XLSX export.
+- Save entries locally so they are still there when the app is reopened.
+- Export to CSV.
 
 ## Columns
 
@@ -53,21 +44,24 @@ Bibliography
 Accuracy
 ```
 
-## Run Tkinter From Source
+## Build From Source
 
-```powershell
-pip install -r requirements.txt
-python archive_studio.py
-```
+Requirements:
 
-## Build Tauri From Source
-
-The Tauri source is currently developed locally and will be added to the repository after the interface settles. To build it locally you need Node.js, Rust, and the Windows C++ build tools.
+- Node.js with npm
+- Rust
+- Windows C++ build tools
 
 ```powershell
 cd archive-studio-tauri
 npm install
-npm run tauri build
+.\build-tauri-windows.cmd
+```
+
+The Windows installer is created at:
+
+```text
+archive-studio-tauri\src-tauri\target\release\bundle\nsis\Archive Studio_0.2.0_x64-setup.exe
 ```
 
 ## Notes
