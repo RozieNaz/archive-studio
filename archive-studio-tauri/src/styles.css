@@ -146,6 +146,19 @@ p {
   margin: 0;
 }
 
+.compact-check {
+  min-width: 38px;
+  padding: 0 7px;
+}
+
+.search-input {
+  width: 140px;
+  min-height: 30px;
+  padding: 0 9px;
+  border-color: var(--line);
+  background: var(--surface);
+}
+
 .icon {
   min-width: 50px;
 }
