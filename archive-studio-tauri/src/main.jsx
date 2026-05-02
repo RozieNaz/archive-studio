@@ -15,7 +15,7 @@ const STORAGE_KEY = "archive-studio-project";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
 const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
 
-// ... (rest of the code remains unchanged)
+// Helper methods remain unchanged
 
 async function fetchMetadataForRow(row) {
   const query = cleanSearchQuery(row.Filename || row["Suggested Filename"]);
@@ -53,6 +53,7 @@ async function fetchMetadataForRow(row) {
   };
 }
 
-// ... (rest of the code remains unchanged)
+// Add named exports for selected functions (for test purposes only)
+export { chooseBest, fetchMetadataForRow, makeBibliography, makeSuggestedFilename };
 
 createRoot(document.getElementById("root")).render(<App />);
