@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
 import "./styles.css";
 
 const COLUMNS = ["Title", "Author", "DOI", "ISBN", "Suggested Filename", "Bibliography", "Accuracy"];
@@ -109,6 +110,13 @@ function rowToText(row) {
 
 function displayLabel(column) {
   return COLUMN_LABELS[column] || column;
+}
+
+function columnHint(column) {
+  const label = displayLabel(column);
+  return label.includes(" ")
+    ? label.split(" ").map((word) => word[0]).join("")
+    : label.slice(0, Math.min(label.length, 2));
 }
 
 function romanToNumber(value) {
@@ -543,6 +551,16 @@ function App() {
     setStatus(`Copied ${selectedRows.length} selected entr${selectedRows.length === 1 ? "y" : "ies"}.`);
   }
 
+  async function exportCsv() {
+    if (!rows.length) return;
+    try {
+      const path = await invoke("save_csv", { filename: "metadata-log.csv", contents: toCsv(rows) });
+      setStatus(`CSV saved to ${path}.`);
+    } catch (error) {
+      setStatus(`CSV export failed: ${error}`);
+    }
+  }
+
   function saveProject() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
     setStatus("Project saved on this device.");
@@ -619,7 +637,7 @@ function App() {
           <button onClick={saveProject} disabled={!rows.length}>Save</button>
           <button onClick={toggleSelectedLocks} disabled={!selectedRows.length}>{selectedLocked ? "Unlock" : "Lock"}</button>
           <button onClick={deleteSelectedEntries} disabled={!selectedRows.length}>Delete</button>
-          <button onClick={() => downloadText("metadata-log.csv", toCsv(rows), "text/csv")} disabled={!rows.length}>CSV</button>
+          <button onClick={exportCsv} disabled={!rows.length}>CSV</button>
           <label className="check compact-check" title="Wrap Text"><input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} /> W</label>
           <input className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
           <select className="copy-select" disabled={!selectedRows.length} defaultValue="" onChange={(event) => {
@@ -651,7 +669,7 @@ function App() {
                   <button className="collapse-column" title={collapsedSet.has(index) ? `Show ${displayLabel(column)}` : `Collapse ${displayLabel(column)}`} onClick={(event) => toggleColumnCollapse(index, event)}>
                     {collapsedSet.has(index) ? ">" : "<"}
                   </button>
-                  <span className="header-label">{displayLabel(column)}</span>
+                  <span className="header-label">{collapsedSet.has(index) ? columnHint(column) : displayLabel(column)}</span>
                   {!collapsedSet.has(index) && sortConfig.column === column && (
                     <span className="sort-mark">
                       {column === "Accuracy" ? (sortConfig.direction === "asc" ? "Worst" : "Best") : sortConfig.direction === "asc" ? "A-Z" : "Z-A"}
