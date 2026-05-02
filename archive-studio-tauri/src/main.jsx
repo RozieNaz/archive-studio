@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const COLUMNS = ["Title", "Author", "DOI", "ISBN", "Suggested Filename", "Bibliography", "Accuracy"];
+const NOTE_FIELD = "Notes";
+const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
+const SORTABLE_COLUMNS = new Set(["Title", "Author", "Accuracy"]);
 const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt"]);
 const DEFAULT_WIDTHS = [170, 140, 130, 130, 205, 290, 105];
 const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
@@ -57,6 +60,7 @@ function makeRow(file) {
     "Suggested Filename": filename,
     Bibliography: "",
     Accuracy: "",
+    Notes: "",
   };
 }
 
@@ -64,6 +68,7 @@ function normaliseSavedRows(savedRows) {
   return savedRows.map((row) => ({
     ...row,
     Accuracy: row.Accuracy || row.Confidence || "",
+    Notes: row.Notes || "",
     Confidence: undefined,
   }));
 }
@@ -80,11 +85,24 @@ function downloadText(filename, text, type) {
 
 function toCsv(rows) {
   const escape = (value) => `"${String(value || "").replaceAll('"', '""')}"`;
-  return [COLUMNS.join(","), ...rows.map((row) => COLUMNS.map((column) => escape(row[column])).join(","))].join("\n");
+  return [EXPORT_COLUMNS.join(","), ...rows.map((row) => EXPORT_COLUMNS.map((column) => escape(row[column])).join(","))].join("\n");
 }
 
 function rowToText(row) {
-  return COLUMNS.map((column) => `${column}: ${row[column] || ""}`).join("\n");
+  return EXPORT_COLUMNS.map((column) => `${column}: ${row[column] || ""}`).join("\n");
+}
+
+function renderFormattedText(value) {
+  const parts = String(value || "").split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
 }
 
 function loadLocalRows() {
@@ -242,6 +260,8 @@ function App() {
   const [wrap, setWrap] = useState(true);
   const [isFetching, setIsFetching] = useState(false);
   const [colWidths, setColWidths] = useState(DEFAULT_WIDTHS);
+  const [sortConfig, setSortConfig] = useState({ column: "", direction: "asc" });
+  const [formatMenu, setFormatMenu] = useState(null);
   const folderInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
@@ -259,6 +279,16 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
   }, [rows]);
+
+  useEffect(() => {
+    const closeMenu = () => setFormatMenu(null);
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenu);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenu);
+    };
+  }, []);
 
   function beginResize(index, event) {
     event.preventDefault();
@@ -307,6 +337,20 @@ function App() {
     setSelectedIndexes([index]);
   }
 
+  function sortBy(column) {
+    if (!SORTABLE_COLUMNS.has(column)) return;
+    const direction = sortConfig.column === column && sortConfig.direction === "asc" ? "desc" : "asc";
+    setRows((current) =>
+      [...current].sort((left, right) => {
+        const a = String(left[column] || "").localeCompare(String(right[column] || ""), undefined, { sensitivity: "base" });
+        return direction === "asc" ? a : -a;
+      })
+    );
+    setSortConfig({ column, direction });
+    setSelectedIndexes([]);
+    setStatus(`Sorted by ${column} ${direction === "asc" ? "A-Z" : "Z-A"}.`);
+  }
+
   async function fetchMetadata() {
     if (!rows.length || isFetching) return;
     stopFetch.current = false;
@@ -351,6 +395,36 @@ function App() {
           : row
       )
     );
+  }
+
+  function openFormatMenu(event, field) {
+    if (event.currentTarget.selectionStart === event.currentTarget.selectionEnd) return;
+    event.preventDefault();
+    setFormatMenu({
+      field,
+      start: event.currentTarget.selectionStart,
+      end: event.currentTarget.selectionEnd,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
+  function applyFormat(marker) {
+    if (!formatMenu || selectedIndexes.length !== 1) return;
+    const selectedIndex = selectedIndexes[0];
+    const field = formatMenu.field;
+    setRows((current) =>
+      current.map((row, index) => {
+        if (index !== selectedIndex) return row;
+        const value = String(row[field] || "");
+        const before = value.slice(0, formatMenu.start);
+        const middle = value.slice(formatMenu.start, formatMenu.end);
+        const after = value.slice(formatMenu.end);
+        return { ...row, [field]: `${before}${marker}${middle}${marker}${after}` };
+      })
+    );
+    setFormatMenu(null);
+    setStatus(marker === "**" ? "Bold formatting added." : "Italic formatting added.");
   }
 
   async function copySelection(kind) {
@@ -438,8 +512,11 @@ function App() {
           <div className="table-scroll">
             <div className="grid header" style={{ gridTemplateColumns, minWidth: tableWidth }}>
               {COLUMNS.map((column, index) => (
-                <strong key={column}>
+                <strong key={column} className={SORTABLE_COLUMNS.has(column) ? "sortable" : ""} onClick={(event) => {
+                  if (!event.target.classList.contains("resize-handle")) sortBy(column);
+                }}>
                   {column}
+                  {sortConfig.column === column && <span className="sort-mark">{sortConfig.direction === "asc" ? "A-Z" : "Z-A"}</span>}
                   <span className="resize-handle" onMouseDown={(event) => beginResize(index, event)} />
                 </strong>
               ))}
@@ -450,7 +527,7 @@ function App() {
               ) : (
                 rows.map((row, index) => (
                   <button key={`${row.Filename}-${index}`} className={selectedIndexes.includes(index) ? "grid row selected" : "grid row"} style={{ gridTemplateColumns, minWidth: tableWidth }} onClick={(event) => selectRow(index, event)}>
-                    {COLUMNS.map((column) => <span key={column}>{row[column]}</span>)}
+                    {COLUMNS.map((column) => <span key={column}>{renderFormattedText(row[column])}</span>)}
                   </button>
                 ))
               )}
@@ -465,7 +542,7 @@ function App() {
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{column}</span>
-                  <textarea value={selected[column] || ""} onChange={(event) => updateSelected(column, event.target.value)} />
+                  <textarea value={selected[column] || ""} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                 </label>
               ) : (
                 <label key={column}>
@@ -477,15 +554,25 @@ function App() {
                       ))}
                     </select>
                   ) : (
-                    <input value={selected[column] || ""} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={selected[column] || ""} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )
             ))}
+            <label>
+              <span>Notes</span>
+              <textarea value={selected.Notes || ""} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
+            </label>
             <button className="done-button" onClick={closeSelectedEntry}>Done</button>
           </aside>
         )}
       </section>
+      {formatMenu && (
+        <div className="format-menu" style={{ left: formatMenu.x, top: formatMenu.y }}>
+          <button onClick={() => applyFormat("**")}>Bold</button>
+          <button onClick={() => applyFormat("*")}>Italic</button>
+        </div>
+      )}
     </main>
   );
 }
