@@ -96,7 +96,7 @@ p {
 }
 
 .actions button,
-.copy-select,
+.dropdown > button,
 .check {
   border: 1px solid var(--accent);
   background: var(--accent);
@@ -110,14 +110,14 @@ p {
 }
 
 .dark .actions button,
-.dark .copy-select,
+.dark .dropdown > button,
 .dark .check {
   border-color: var(--accent);
   background: var(--accent);
 }
 
 .actions button:disabled,
-.copy-select:disabled {
+.dropdown > button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -132,12 +132,6 @@ p {
 .dark .actions .danger {
   border-color: #c9796b;
   background: #d98a7a;
-}
-
-.copy-select {
-  appearance: auto;
-  width: auto;
-  min-width: 74px;
 }
 
 .check {
@@ -167,6 +161,63 @@ p {
 
 .icon {
   min-width: 50px;
+}
+
+.dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.dropdown > button {
+  min-width: 74px;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 30;
+  min-width: 135px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.18);
+}
+
+.dropdown-menu button {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 10px;
+  text-align: left;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dropdown-menu button:last-child {
+  border-bottom: 0;
+}
+
+.dropdown-menu button:hover,
+.dropdown-menu button.active-option {
+  background: var(--accent);
+  color: var(--button-text);
+}
+
+.field-dropdown,
+.field-dropdown > button {
+  width: 100%;
+}
+
+.field-dropdown .dropdown-menu {
+  left: 0;
+  right: auto;
 }
 
 .workspace {
@@ -232,6 +283,7 @@ p {
   min-width: 0;
 }
 
+.collapsed-column .header-label,
 .collapsed-column .sort-mark {
   display: none;
 }
@@ -502,7 +554,7 @@ textarea {
   }
 
   .actions button,
-  .copy-select,
+  .dropdown > button,
   .check {
     min-height: 30px;
     padding: 0 8px;
