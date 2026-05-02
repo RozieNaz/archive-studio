@@ -244,6 +244,7 @@ function App() {
   const [colWidths, setColWidths] = useState(DEFAULT_WIDTHS);
   const folderInput = useRef(null);
   const projectInput = useRef(null);
+  const stopFetch = useRef(false);
 
   const gridTemplateColumns = colWidths.map((width) => `${width}px`).join(" ");
   const tableWidth = colWidths.reduce((sum, width) => sum + width, 0);
@@ -308,16 +309,33 @@ function App() {
 
   async function fetchMetadata() {
     if (!rows.length || isFetching) return;
+    stopFetch.current = false;
     setIsFetching(true);
-    const next = [...rows];
-    for (let index = 0; index < next.length; index += 1) {
-      if (next[index].Title && next[index].Accuracy) continue;
-      setStatus(`Fetching metadata ${index + 1}/${next.length}`);
-      next[index] = await fetchMetadataForRow(next[index]);
-      setRows([...next]);
+    const queue = rows.map((row) => ({ ...row }));
+    for (let index = 0; index < queue.length; index += 1) {
+      if (stopFetch.current) {
+        setStatus("Metadata fetch stopped.");
+        break;
+      }
+      if (queue[index].Title && queue[index].Accuracy) continue;
+      setStatus(`Fetching metadata ${index + 1}/${queue.length}`);
+      const fetched = await fetchMetadataForRow(queue[index]);
+      if (stopFetch.current) {
+        setStatus("Metadata fetch stopped.");
+        break;
+      }
+      setRows((current) =>
+        current.map((row) => (row.Filename === fetched.Filename ? fetched : row))
+      );
     }
     setIsFetching(false);
-    setStatus("Metadata fetch complete.");
+    if (!stopFetch.current) setStatus("Metadata fetch complete.");
+  }
+
+  function stopCurrentJob() {
+    if (!isFetching) return;
+    stopFetch.current = true;
+    setStatus("Stopping metadata fetch...");
   }
 
   function updateSelected(field, value) {
@@ -364,6 +382,7 @@ function App() {
 
   function deleteSelectedEntries() {
     if (!selectedIndexes.length) return;
+    stopFetch.current = true;
     const remove = new Set(selectedIndexes);
     setRows((current) => current.filter((_, index) => !remove.has(index)));
     setSelectedIndexes([]);
@@ -392,7 +411,7 @@ function App() {
         <div className="actions">
           <button onClick={() => folderInput.current?.click()}>Open</button>
           <button onClick={fetchMetadata} disabled={!rows.length || isFetching}>{isFetching ? "Fetching" : "Fetch"}</button>
-          <button onClick={() => projectInput.current?.click()}>Open</button>
+          <button onClick={stopCurrentJob} disabled={!isFetching}>Stop</button>
           <button onClick={saveProject} disabled={!rows.length}>Save</button>
           <button onClick={deleteSelectedEntries} disabled={!selectedRows.length}>Delete</button>
           <button onClick={() => downloadText("metadata-log.csv", toCsv(rows), "text/csv")} disabled={!rows.length}>CSV</button>
