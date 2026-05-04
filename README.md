@@ -21,16 +21,19 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 ## Features
 
 - Scan a local folder of PDF, EPUB, MOBI, AZW3, DJVU, DOC/DOCX, RTF, and TXT files.
-- Clean messy archive filenames.
-- Fetch metadata from Google Books, Open Library, and Crossref.
-- Generate suggested filenames.
-- Generate bibliography entries.
-- Mark accuracy as High, Medium, Low, or Zero.
-- Manually edit title, author, DOI, ISBN, bibliography, suggested filename, and accuracy.
-- Delete selected entries.
+- Clean messy archive filenames and title-case entries.
+- Fetch metadata from public sources including Crossref, OpenAlex, Google Books, and Open Library.
+- Generate suggested filenames in the form `Author - Title (Year)`.
+- Generate bibliography entries and mark accuracy as High, Medium, Low, or Zero.
+- Manually edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
+- Use right-click formatting for bold and italic text in editable fields.
+- Search entries, sort by title/author/accuracy, resize columns, collapse columns, and wrap table text.
+- Select multiple entries with Ctrl for copy, lock, and delete workflows.
 - Copy bibliography, suggested filename, or entire entries.
+- Lock entries to protect them from editing, deleting, or clearing.
 - Save entries locally so they are still there when the app is reopened.
-- Export to CSV.
+- Save/export a CSV file to Downloads as `metadata-log.csv`.
+- Use cream/olive light mode and brown/olive dark mode.
 
 ## Columns
 
@@ -42,6 +45,7 @@ ISBN
 Suggested Filename
 Bibliography
 Accuracy
+Notes
 ```
 
 ## Build From Source
