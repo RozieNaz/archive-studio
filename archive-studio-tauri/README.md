@@ -8,7 +8,7 @@ This is the Tauri version of the app. It uses Tauri, React, and Vite.
 
 - Scan whole folders of academic files.
 - Clean filenames by removing archive junk, symbols, extensions, and messy spacing.
-- Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, and Open Library.
+- Fetch metadata from public online sources.
 - Edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
 - Use right-click formatting for bold and italic text in editable fields.
 - Copy bibliography, filename, or full entry.
