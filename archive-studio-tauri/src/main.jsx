@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import "./styles.css";
@@ -15,7 +15,7 @@ const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
 const COLLAPSED_WIDTH = 34;
 const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
 const STORAGE_KEY = "archive-studio-project";
-const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
+const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
 const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
 
 function cleanFilename(name) {
@@ -49,7 +49,9 @@ function titleCase(value) {
     .filter(Boolean)
     .map((word, index, words) => {
       if (word === "-") return word;
-      if (index > 0 && index < words.length - 1 && SMALL_WORDS.has(word)) return word;
+      const previous = words[index - 1] || "";
+      const startsPhrase = index === 0 || previous === "-" || /[:.!?]$/.test(previous);
+      if (!startsPhrase && index < words.length - 1 && SMALL_WORDS.has(word)) return word;
       return word.slice(0, 1).toUpperCase() + word.slice(1);
     })
     .join(" ");
@@ -164,6 +166,23 @@ function renderCellText(column, value) {
   return renderFormattedText(text);
 }
 
+function Icon({ name }) {
+  const common = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
+  const icons = {
+    folder: <><path {...common} d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><path {...common} d="M3 8.5h18" /></>,
+    search: <><circle {...common} cx="10.5" cy="10.5" r="6.5" /><path {...common} d="m16 16 5 5" /></>,
+    stop: <><circle {...common} cx="12" cy="12" r="9" /><rect {...common} x="8.5" y="8.5" width="7" height="7" rx="1" /></>,
+    save: <><path {...common} d="M5 3h12l2 2v16H5z" /><path {...common} d="M8 3v6h8V3" /><path {...common} d="M8 21v-7h8v7" /></>,
+    lock: <><rect {...common} x="5" y="10" width="14" height="10" rx="2" /><path {...common} d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
+    unlock: <><rect {...common} x="5" y="10" width="14" height="10" rx="2" /><path {...common} d="M16 10V7a4 4 0 0 0-7.7-1.5" /></>,
+    copy: <><rect {...common} x="8" y="8" width="11" height="11" rx="2" /><path {...common} d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" /></>,
+    wand: <><path {...common} d="m4 20 11-11" /><path {...common} d="m13 7 4 4" /><path {...common} d="M19 4v3" /><path {...common} d="M20.5 5.5h-3" /><path {...common} d="M6 4v2" /><path {...common} d="M7 5H5" /></>,
+    checkSearch: <><circle {...common} cx="10" cy="10" r="6" /><path {...common} d="m15 15 5 5" /><path {...common} d="m7.5 10 1.8 1.8 3.5-4" /></>,
+    done: <path {...common} d="M5 12.5 10 17l9-10" />,
+  };
+  return <svg className="button-icon" viewBox="0 0 24 24" aria-hidden="true">{icons[name]}</svg>;
+}
+
 function loadLocalRows() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -179,6 +198,23 @@ async function fetchJson(url) {
   const response = await fetch(url, { headers: { Accept: "application/json" } });
   if (!response.ok) return null;
   return response.json();
+}
+
+async function postTextJson(url, text, timeoutMs = 3500) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "text/plain" },
+      body: text,
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function normalise(value) {
@@ -201,9 +237,42 @@ function yearFrom(value) {
   return String(value || "").match(/\b(15|16|17|18|19|20)\d{2}\b/)?.[0] || "";
 }
 
+function firstIdentifier(value) {
+  return String(value || "")
+    .split(/[,\n;]/)
+    .map((part) => part.trim())
+    .find(Boolean) || "";
+}
+
+function cleanDoi(value) {
+  return String(value || "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/\bDOI:\s*/i, "")
+    .replace(/[_\s]+/g, "_")
+    .replace(/[<>;"{}[\]|\\]+/g, "")
+    .replace(/[.,]+$/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function authorTitleFromRow(row) {
+  const directAuthor = stripJunk(row.Author);
+  const directTitle = stripJunk(row.Title);
+  if (directAuthor && directTitle) return { author: directAuthor, title: directTitle };
+
+  const source = stripJunk(row["Suggested Filename"] || row.Filename || "");
+  const parts = source.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return { author: "", title: "" };
+
+  return {
+    author: parts[0],
+    title: parts.slice(1).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim(),
+  };
+}
+
 function makeSuggestedFilename(item) {
-  const author = (item.author || "").split(",")[0].trim();
-  const title = (item.title || "").split(":")[0].trim();
+  const author = stripJunk(item.author || "").split(",")[0].trim();
+  const title = shortTitle(item.title || "");
   const year = item.year || "";
   if (author && title && year) return titleCase(`${author} - ${title} (${year})`);
   if (author && title) return titleCase(`${author} - ${title}`);
@@ -211,15 +280,159 @@ function makeSuggestedFilename(item) {
   return titleCase(title);
 }
 
+function stripJunk(value) {
+  return String(value || "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/\b(z[-_\s]*library|zlib|1lib|libgen|pdf\s*drive|pdfdrive|dokumenhub|anna'?s?\s*archive|archive\.org)\b/gi, " ")
+    .replace(/\b(pdf|epub|mobi|azw3|djvu|docx?|rtf|txt)\b$/gi, " ")
+    .replace(/[_+$@#%^~=]+/g, " ")
+    .replace(/[{}[\]|\\;"<>?!]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function authorFromBibliography(value) {
+  const firstPart = stripJunk(value).split(".")[0]?.trim() || "";
+  if (!firstPart || /\b(doi|isbn|journal|press|publisher)\b/i.test(firstPart)) return "";
+  const commaMatch = firstPart.match(/^([^,]+),\s*(.+)$/);
+  if (commaMatch) return titleCase(`${commaMatch[2]} ${commaMatch[1]}`);
+  return titleCase(firstPart);
+}
+
+function titleFromBibliography(value) {
+  const parts = stripJunk(value).split(".").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return "";
+  return titleCase(parts[1]);
+}
+
+function shouldReplaceTitle(currentTitle, extractedTitle, author) {
+  const current = stripJunk(currentTitle);
+  const extracted = stripJunk(extractedTitle);
+  if (!extracted) return false;
+  if (!current) return true;
+  if (current.length < 8 && extracted.length > current.length + 8) return true;
+  const authorTokens = normalise(author).split(" ").filter(Boolean);
+  const currentTokens = normalise(current).split(" ").filter(Boolean);
+  if (currentTokens.length <= 2 && currentTokens.some((token) => authorTokens.includes(token))) return true;
+  return tokenOverlap(current, extracted) < 0.25 && extracted.length > current.length + 8;
+}
+
+function doiFromBibliography(value) {
+  const match = normaliseBibliographyLabels(value).match(/\bDOI:\s*(10\.[^.]+(?:\.[^.]+)*)/i);
+  return match ? cleanDoi(match[1]) : "";
+}
+
+function extractFromBibliography(row) {
+  if (!row.Bibliography) return {};
+  return {
+    Author: authorFromBibliography(row.Bibliography),
+    Title: titleFromBibliography(row.Bibliography),
+    DOI: doiFromBibliography(row.Bibliography),
+  };
+}
+
+function shortTitle(value) {
+  return stripJunk(value)
+    .split(":")[0]
+    .split(" - ")[0]
+    .split(". ")[0]
+    .split(", ")[0]
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function cleanEntry(row) {
+  const extracted = extractFromBibliography(row);
+  const author = row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || "";
+  const title = shouldReplaceTitle(row.Title, extracted.Title, author)
+    ? extracted.Title
+    : row.Title ? titleCase(stripJunk(row.Title)) : extracted.Title || "";
+  const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title);
+  const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
+  const suggested = author && title && tokenOverlap(currentSuggested, title) < 0.5
+    ? makeSuggestedFilename({ author, title, year })
+    : currentSuggested || makeSuggestedFilename({ author, title, year });
+  return {
+    ...row,
+    Title: title,
+    Author: author,
+    DOI: cleanDoi(row.DOI || extracted.DOI),
+    ISBN: stripJunk(row.ISBN),
+    "Suggested Filename": suggested,
+    Bibliography: normaliseBibliographyLabels(stripJunk(row.Bibliography)),
+    Notes: stripJunk(row.Notes),
+  };
+}
+
+function entryWarnings(row) {
+  const warnings = [];
+  if (!row.Author) warnings.push("missing author");
+  if (!row.Title) warnings.push("missing title");
+  if (!yearFrom(row.Bibliography || row["Suggested Filename"])) warnings.push("missing year");
+  if (!row.DOI && !row.ISBN) warnings.push("missing DOI/ISBN");
+  return warnings;
+}
+
+function hasUsableIdentity(row) {
+  return Boolean(stripJunk(row.Author) && stripJunk(row.Title));
+}
+
+function bibliographyAuthor(value) {
+  const clean = stripJunk(value);
+  const names = clean.split(",").map((name) => name.trim()).filter(Boolean);
+  const first = names[0] || clean;
+  const parts = first.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return first;
+  return `${parts.at(-1)}, ${parts.slice(0, -1).join(" ")}`;
+}
+
+function isStrongBibliography(value) {
+  const text = stripJunk(value);
+  return Boolean(text && yearFrom(text) && /\bDOI:\s*10\./i.test(text) && (/["“”]/.test(text) || /\b\d+\s*,?\s*no\.?\s*\d+/i.test(text) || /:\s*\d+[-–]\d+/.test(text)));
+}
+
+function mergeCheckedRow(original, cleaned, checked) {
+  if (checked.Accuracy === "Zero") return cleaned;
+  const keep = (field, fallback = checked[field]) => cleaned[field] || fallback || "";
+  return {
+    ...cleaned,
+    Title: keep("Title"),
+    Author: keep("Author"),
+    DOI: keep("DOI"),
+    ISBN: keep("ISBN"),
+    "Suggested Filename": keep("Suggested Filename"),
+    Bibliography: cleaned.Bibliography || checked.Bibliography || "",
+    Notes: cleaned.Notes || checked.Notes || "",
+    Filename: original.Filename,
+    Accuracy: cleaned.Accuracy || checked.Accuracy,
+    Locked: original.Locked,
+  };
+}
+
 function makeBibliography(item) {
+  const author = stripJunk(item.author);
+  const title = stripJunk(item.title);
+  const publication = stripJunk(item.publication);
+  const publisher = stripJunk(item.publisher);
+  const year = item.year || "";
+  const doi = cleanDoi(item.doi);
+  const isbn = stripJunk(item.isbn);
+  if (author && title && publication && (item.volume || item.issue || item.pages)) {
+    const volumeIssue = [stripJunk(item.volume), item.issue ? `no. ${stripJunk(item.issue)}` : ""].filter(Boolean).join(", ");
+    const pages = item.pages ? `: ${stripJunk(item.pages).replace(/--/g, "–").replace(/-/g, "–")}` : "";
+    const doiPart = doi ? ` DOI: ${doi}.` : "";
+    return `${bibliographyAuthor(author)}. "${title}." ${publication}${volumeIssue ? ` ${volumeIssue}` : ""}${year ? ` (${year})` : ""}${pages}.${doiPart}`.replace(/\s+/g, " ").trim();
+  }
   const parts = [];
-  if (item.author) parts.push(`${item.author}.`);
-  if (item.title) parts.push(`${item.title}.`);
-  if (item.publication) parts.push(`${item.publication}.`);
-  if (item.publisher) parts.push(`${item.publisher}.`);
-  if (item.year) parts.push(`${item.year}.`);
-  if (item.doi) parts.push(`DOI: ${item.doi}.`);
-  else if (item.isbn) parts.push(`ISBN: ${item.isbn}.`);
+  if (author) parts.push(`${author}.`);
+  if (title) parts.push(`${title}.`);
+  if (publication) parts.push(`${publication}.`);
+  if (publisher) parts.push(`${publisher}.`);
+  if (year) parts.push(`${year}.`);
+  if (doi) parts.push(`DOI: ${doi}.`);
+  else if (isbn) parts.push(`ISBN: ${isbn}.`);
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
@@ -254,54 +467,193 @@ async function searchOpenLibrary(query) {
   }));
 }
 
+async function searchOpenAlex(author, title) {
+  const query = [author, title].filter(Boolean).join(" ");
+  if (!query) return [];
+  const data = await fetchJson(`https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=5`);
+  return (data?.results || []).map((item) => {
+    const biblio = item.biblio || {};
+    const firstPage = biblio.first_page || "";
+    const lastPage = biblio.last_page || "";
+    return {
+      source: "OpenAlex",
+      title: stripJunk(item.title || item.display_name || ""),
+      author: (item.authorships || []).slice(0, 3).map((authorship) => authorship.author?.display_name).filter(Boolean).join(", "),
+      year: item.publication_year || "",
+      publisher: item.primary_location?.source?.host_organization_name || "",
+      publication: stripJunk(item.primary_location?.source?.display_name || ""),
+      doi: cleanDoi(item.doi || ""),
+      isbn: "",
+      volume: biblio.volume || "",
+      issue: biblio.issue || "",
+      pages: firstPage && lastPage ? `${firstPage}-${lastPage}` : firstPage,
+    };
+  });
+}
+
 async function searchCrossref(query) {
   const data = await fetchJson(`https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(query)}&rows=5`);
   return (data?.message?.items || []).map((item) => ({
     source: "Crossref",
-    title: (item.title || [""])[0] || "",
+    title: stripJunk((item.title || [""])[0] || ""),
     author: (item.author || []).slice(0, 3).map((a) => a.name || [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", "),
     year: item.issued?.["date-parts"]?.[0]?.[0] || "",
     publisher: item.publisher || "",
-    publication: (item["container-title"] || [""])[0] || "",
+    publication: stripJunk((item["container-title"] || [""])[0] || ""),
     doi: item.DOI || "",
     isbn: (item.ISBN || []).join(", "),
+    volume: item.volume || "",
+    issue: item.issue || "",
+    pages: item.page || "",
   }));
 }
 
-function chooseBest(filename, query, candidates) {
+async function searchCrossrefByAuthorTitle(author, title) {
+  if (!author || !title) return [];
+  const params = new URLSearchParams({
+    "query.author": author,
+    "query.title": title,
+    rows: "5",
+  });
+  const data = await fetchJson(`https://api.crossref.org/works?${params.toString()}`);
+  return (data?.message?.items || []).map((item) => ({
+    source: "Crossref Author Title",
+    title: stripJunk((item.title || [""])[0] || ""),
+    author: (item.author || []).slice(0, 3).map((a) => a.name || [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", "),
+    year: item.issued?.["date-parts"]?.[0]?.[0] || "",
+    publisher: item.publisher || "",
+    publication: stripJunk((item["container-title"] || [""])[0] || ""),
+    doi: item.DOI || "",
+    isbn: (item.ISBN || []).join(", "),
+    volume: item.volume || "",
+    issue: item.issue || "",
+    pages: item.page || "",
+  }));
+}
+
+async function searchCrossrefByDoi(doi) {
+  const doiValue = cleanDoi(doi);
+  if (!doiValue.startsWith("10.")) return [];
+  const data = await fetchJson(`https://api.crossref.org/works/${encodeURIComponent(doiValue)}`);
+  const item = data?.message;
+  if (!item) return [];
+  return [{
+    source: "Crossref DOI",
+    title: stripJunk((item.title || [""])[0] || ""),
+    author: (item.author || []).slice(0, 3).map((a) => a.name || [a.given, a.family].filter(Boolean).join(" ")).filter(Boolean).join(", "),
+    year: item.issued?.["date-parts"]?.[0]?.[0] || "",
+    publisher: item.publisher || "",
+    publication: stripJunk((item["container-title"] || [""])[0] || ""),
+    doi: item.DOI || doiValue,
+    isbn: (item.ISBN || []).join(", "),
+    volume: item.volume || "",
+    issue: item.issue || "",
+    pages: item.page || "",
+    score: 100,
+    accuracy: "High",
+  }];
+}
+
+function zoteroCreatorsToAuthor(creators = []) {
+  return creators
+    .filter((creator) => !creator.creatorType || ["author", "editor"].includes(creator.creatorType))
+    .slice(0, 3)
+    .map((creator) => {
+      if (creator.name) return creator.name;
+      return [creator.firstName, creator.lastName].filter(Boolean).join(" ");
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function mapZoteroItem(item) {
+  return {
+    source: "Zotero Translation Server",
+    title: stripJunk(item.title || ""),
+    author: zoteroCreatorsToAuthor(item.creators || []),
+    year: yearFrom(item.date),
+    publisher: item.publisher || "",
+    publication: stripJunk(item.publicationTitle || item.proceedingsTitle || item.bookTitle || ""),
+    doi: cleanDoi(item.DOI || item.doi || ""),
+    isbn: item.ISBN || item.isbn || "",
+    volume: item.volume || "",
+    issue: item.issue || "",
+    pages: item.pages || "",
+    score: 100,
+    accuracy: "High",
+  };
+}
+
+async function searchZoteroTranslationServer(identifier) {
+  const cleanIdentifier = firstIdentifier(identifier);
+  if (!cleanIdentifier) return [];
+  const data = await postTextJson("http://127.0.0.1:1969/search", cleanIdentifier);
+  const items = Array.isArray(data) ? data : [];
+  return items.map(mapZoteroItem).filter((item) => item.title);
+}
+
+function chooseBest(filename, query, candidates, expected = {}) {
   const fileVolume = extractVolume(filename);
   const scored = candidates
     .filter((item) => item.title)
     .map((item) => {
-      let score = tokenOverlap(query || filename, item.title) * 60;
+      const titleScore = tokenOverlap(query || filename, item.title);
+      const authorScore = expected.author ? tokenOverlap(expected.author, item.author) : 0;
+      let score = typeof item.score === "number" ? item.score : titleScore * 55;
       const candidateVolume = extractVolume(item.title);
-      if (item.author && tokenOverlap(filename, item.author) > 0) score += 15;
+      if (expected.author) score += authorScore * 35;
+      else if (item.author && tokenOverlap(filename, item.author) > 0) score += 15;
       if (item.isbn) score += 8;
       if (item.doi) score += 5;
       if (item.year && filename.includes(String(item.year))) score += 8;
       if (fileVolume && candidateVolume && fileVolume === candidateVolume) score += 18;
       if (fileVolume && candidateVolume && fileVolume !== candidateVolume) score -= 45;
+      if (expected.author && authorScore < 0.25) score -= 40;
+      if (expected.title && titleScore < 0.5) score -= 40;
       const accuracy = score >= 55 ? "High" : score >= 32 ? "Medium" : score >= 12 ? "Low" : "Zero";
-      return { ...item, score, accuracy };
+      return { ...item, score, accuracy, titleScore, authorScore };
     })
     .sort((a, b) => b.score - a.score);
-  return scored[0] || null;
+  const best = scored[0] || null;
+  if (best && expected.author && expected.title && (best.authorScore < 0.25 || best.titleScore < 0.5)) return null;
+  return best && best.score >= 55 ? best : null;
 }
 
 async function fetchMetadataForRow(row) {
   const query = cleanSearchQuery(row.Filename || row["Suggested Filename"]);
+  const authorTitle = authorTitleFromRow(row);
   const candidates = [];
+  for (const identifier of [row.DOI, row.ISBN].map(firstIdentifier).filter(Boolean)) {
+    try {
+      candidates.push(...(await searchZoteroTranslationServer(identifier)));
+    } catch {
+      // Zotero Translation Server is optional; fall back if it is not running.
+    }
+  }
+  if (row.DOI) {
+    try {
+      candidates.push(...(await searchCrossrefByDoi(row.DOI)));
+    } catch {
+      // Keep going if DOI lookup fails.
+    }
+  }
+  try {
+    candidates.push(...(await searchOpenAlex(authorTitle.author, authorTitle.title)));
+    candidates.push(...(await searchCrossrefByAuthorTitle(authorTitle.author, authorTitle.title)));
+  } catch {
+    // Keep going if author-title lookup fails.
+  }
   for (const search of [query, query.replace(/\b(review of|review|book review)\b/gi, "").trim()].filter(Boolean)) {
     try {
+      candidates.push(...(await searchCrossref(search)));
       candidates.push(...(await searchGoogleBooks(search)));
       candidates.push(...(await searchOpenLibrary(search)));
-      candidates.push(...(await searchCrossref(search)));
     } catch {
       // Keep fetching other rows if one public source blocks or times out.
     }
   }
-  const best = chooseBest(row.Filename || "", query, candidates);
-  if (!best) return { ...row, Accuracy: "Zero" };
+  const best = chooseBest(row.Filename || "", authorTitle.title || query, candidates, authorTitle);
+  if (!best) return { ...cleanEntry(row), Accuracy: "Zero" };
   const fileVolume = extractVolume(row.Filename || row["Suggested Filename"]);
   const bestVolume = extractVolume(best.title);
   let title = best.title;
@@ -312,7 +664,7 @@ async function fetchMetadataForRow(row) {
   }
   const output = { ...best, title };
   const bibliography = makeBibliography(output);
-  return {
+  const nextRow = {
     ...row,
     Title: titleCase(output.title),
     Author: titleCase(best.author),
@@ -321,6 +673,10 @@ async function fetchMetadataForRow(row) {
     "Suggested Filename": makeSuggestedFilename(output),
     Bibliography: bibliography,
     Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
+  };
+  if (!hasUsableIdentity(nextRow)) return { ...nextRow, Accuracy: "Zero" };
+  return {
+    ...nextRow,
   };
 }
 
@@ -336,6 +692,7 @@ function App() {
   const [formatMenu, setFormatMenu] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
+  const [openMenu, setOpenMenu] = useState("");
   const folderInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
@@ -367,7 +724,10 @@ function App() {
   }, [rows]);
 
   useEffect(() => {
-    const closeMenu = () => setFormatMenu(null);
+    const closeMenu = () => {
+      setFormatMenu(null);
+      setOpenMenu("");
+    };
     window.addEventListener("click", closeMenu);
     window.addEventListener("keydown", closeMenu);
     return () => {
@@ -561,9 +921,18 @@ function App() {
     }
   }
 
-  function saveProject() {
+  async function saveProject() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
-    setStatus("Project saved on this device.");
+    if (!rows.length) {
+      setStatus("Project saved on this device.");
+      return;
+    }
+    try {
+      const path = await invoke("save_csv", { filename: "metadata-log.csv", contents: toCsv(rows) });
+      setStatus(`Project saved. CSV replaced at ${path}.`);
+    } catch (error) {
+      setStatus(`Project saved locally. CSV save failed: ${error}`);
+    }
   }
 
   function deleteSelectedEntries() {
@@ -610,11 +979,76 @@ function App() {
     setStatus("Entry saved.");
   }
 
+  function chooseCopy(kind) {
+    copySelection(kind);
+    setOpenMenu("");
+  }
+
+  function chooseAccuracy(value) {
+    updateSelected("Accuracy", value);
+    setOpenMenu("");
+  }
+
+  function cleanSelectedEntry() {
+    if (selectedIndexes.length !== 1) return;
+    const selectedIndex = selectedIndexes[0];
+    if (rows[selectedIndex]?.Locked) return;
+    setRows((current) =>
+      current.map((row, index) => (index === selectedIndex ? cleanEntry(row) : row))
+    );
+    setStatus("Selected entry cleaned up.");
+  }
+
+  function cleanUnlockedEntries() {
+    if (!rows.length) return;
+    let cleanedCount = 0;
+    setRows((current) =>
+      current.map((row) => {
+        if (row.Locked) return row;
+        cleanedCount += 1;
+        return cleanEntry(row);
+      })
+    );
+    setStatus(`Cleaned ${cleanedCount} entr${cleanedCount === 1 ? "y" : "ies"}.`);
+  }
+
+  async function quickCheckSelectedEntry() {
+    if (selectedIndexes.length !== 1 || isFetching) return;
+    const selectedIndex = selectedIndexes[0];
+    const row = rows[selectedIndex];
+    if (!row || row.Locked) return;
+    setIsFetching(true);
+    setStatus("Quick checking selected entry online...");
+    const cleaned = cleanEntry(row);
+    const lookupRow = {
+      ...cleaned,
+      Filename: [cleaned.Author, cleaned.Title, cleaned.DOI, cleaned.ISBN].filter(Boolean).join(" "),
+      "Suggested Filename": [cleaned.Author, cleaned.Title, cleaned.DOI, cleaned.ISBN].filter(Boolean).join(" "),
+    };
+    try {
+      const checked = await fetchMetadataForRow(lookupRow);
+      const finalRow = mergeCheckedRow(row, cleaned, checked);
+      const warnings = entryWarnings(finalRow);
+      setRows((current) =>
+        current.map((item, index) => (index === selectedIndex ? finalRow : item))
+      );
+      setStatus(warnings.length ? "Check finished. Kept extracted/local data where online lookup was not reliable." : "Check complete.");
+    } catch {
+      const warnings = entryWarnings(cleaned);
+      setRows((current) =>
+        current.map((item, index) => (index === selectedIndex ? cleaned : item))
+      );
+      setStatus(warnings.length ? "Online check failed. Kept extracted/local data." : "Online check failed. Cleaned entry only.");
+    } finally {
+      setIsFetching(false);
+    }
+  }
+
   useEffect(() => {
     const onKeyDown = (event) => {
       const tagName = event.target?.tagName;
       if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
-      if (event.key === "Delete" && selectedIndexes.length) {
+      if ((event.key === "Delete" || (event.ctrlKey && event.key.toLowerCase() === "x")) && selectedIndexes.length) {
         event.preventDefault();
         deleteSelectedEntries();
       }
@@ -631,26 +1065,30 @@ function App() {
           <p>{counts.total ? `${counts.done}/${counts.total} entries have metadata - ${status}` : status}</p>
         </div>
         <div className="actions">
-          <button onClick={() => folderInput.current?.click()}>Open</button>
-          <button onClick={fetchMetadata} disabled={!rows.length || isFetching}>{isFetching ? "Fetching" : "Fetch"}</button>
-          <button onClick={stopCurrentJob} disabled={!isFetching}>Stop</button>
-          <button onClick={saveProject} disabled={!rows.length}>Save</button>
-          <button onClick={toggleSelectedLocks} disabled={!selectedRows.length}>{selectedLocked ? "Unlock" : "Lock"}</button>
-          <button onClick={deleteSelectedEntries} disabled={!selectedRows.length}>Delete</button>
-          <button onClick={exportCsv} disabled={!rows.length}>CSV</button>
-          <label className="check compact-check" title="Wrap Text"><input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} /> W</label>
           <input className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
-          <select className="copy-select" disabled={!selectedRows.length} defaultValue="" onChange={(event) => {
-            copySelection(event.target.value);
-            event.target.value = "";
-          }}>
-            <option value="">Copy</option>
-            <option value="bibliography">Bibliography</option>
-            <option value="filename">Filename</option>
-            <option value="entry">Entry</option>
-          </select>
+          <button title="Open Folder" onClick={() => folderInput.current?.click()}><Icon name="folder" /></button>
+          <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
+          <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
+          <button title="Save" onClick={saveProject} disabled={!rows.length}><Icon name="save" /></button>
+          <button title={selectedLocked ? "Unlock Selected" : "Lock Selected"} onClick={toggleSelectedLocks} disabled={!selectedRows.length}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
+          <button className="csv-button" title="Export CSV" onClick={exportCsv} disabled={!rows.length}>CSV</button>
+          <button className={wrap ? "wrap-button active" : "wrap-button"} title="Wrap Text" onClick={() => setWrap((current) => !current)}>|↩|</button>
+          <div className="select-menu compact-select">
+            <button title="Copy" disabled={!selectedRows.length} onClick={(event) => {
+              event.stopPropagation();
+              setOpenMenu(openMenu === "copy" ? "" : "copy");
+            }}><Icon name="copy" /></button>
+            {openMenu === "copy" && (
+              <div className="select-list">
+                <button onClick={() => chooseCopy("bibliography")}>Bibliography</button>
+                <button onClick={() => chooseCopy("filename")}>Filename</button>
+                <button onClick={() => chooseCopy("entry")}>Entry</button>
+              </div>
+            )}
+          </div>
+          <button title="Clean Up" onClick={cleanUnlockedEntries} disabled={!rows.length}><Icon name="wand" /></button>
           <button className="icon" title={isDark ? "Switch to light mode" : "Switch to dark mode"} onClick={() => setIsDark(!isDark)}>
-            {isDark ? "Light" : "Dark"}
+            {isDark ? "☀" : "☾"}
           </button>
           <button className="danger" onClick={clearUnlockedEntries} disabled={!rows.length}>Clear</button>
         </div>
@@ -706,11 +1144,21 @@ function App() {
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
                   {column === "Accuracy" ? (
-                    <select value={selected[column] || ""} disabled={selected.Locked} onChange={(event) => updateSelected(column, event.target.value)}>
-                      {ACCURACY_OPTIONS.map((option) => (
-                        <option key={option} value={option}>{option || "Not Set"}</option>
-                      ))}
-                    </select>
+                    <div className="select-menu">
+                      <button disabled={selected.Locked} onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenMenu(openMenu === "accuracy" ? "" : "accuracy");
+                      }}>{selected[column] || "Not Set"} <span>⌄</span></button>
+                      {openMenu === "accuracy" && (
+                        <div className="select-list">
+                          {ACCURACY_OPTIONS.map((option) => (
+                            <button key={option || "not-set"} className={(selected[column] || "") === option ? "selected-option" : ""} onClick={() => chooseAccuracy(option)}>
+                              {option || "Not Set"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <input value={selected[column] || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
@@ -721,7 +1169,10 @@ function App() {
               <span>Notes</span>
               <textarea value={selected.Notes || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
             </label>
-            <button className="done-button" onClick={closeSelectedEntry}>Done</button>
+            <div className="editor-actions">
+              <button className="done-button" title="Quick Check Entry" disabled={selected.Locked || isFetching} onClick={quickCheckSelectedEntry}><Icon name="checkSearch" /></button>
+              <button className="done-button" title="Done" onClick={closeSelectedEntry}><Icon name="done" /></button>
+            </div>
           </aside>
         )}
       </section>

@@ -8,15 +8,7 @@ fn save_csv(filename: String, contents: String) -> Result<String, String> {
     let downloads = PathBuf::from(home).join("Downloads");
     fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
 
-    let mut path = downloads.join(&filename);
-    if path.exists() {
-        let stem = filename.trim_end_matches(".csv");
-        let mut counter = 2;
-        while path.exists() {
-            path = downloads.join(format!("{stem}-{counter}.csv"));
-            counter += 1;
-        }
-    }
+    let path = downloads.join(&filename);
 
     fs::write(&path, contents).map_err(|error| error.to_string())?;
     Ok(path.to_string_lossy().to_string())
