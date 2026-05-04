@@ -46,8 +46,7 @@ The installer is created under:
 ```text
 src-tauri\target\release\bundle\nsis\
 ```
+<img width="1244" height="772" alt="Light-ArchiveStudio-Screenshot-Tauri" src="https://github.com/user-attachments/assets/576f3143-e5da-452f-936c-09fc109a3e58" />
+<img width="1244" height="772" alt="Dark-ArchiveStudio-Screenshot-Tauri" src="https://github.com/user-attachments/assets/58e5ff7e-e3d1-42cd-89e0-1dc909e71a25" />
 
-<img width="1449" height="785" alt="Light-ArchiveStudio-Screenshot-Tauri" src="https://github.com/user-attachments/assets/4982eee7-969f-45d8-a34e-724ade994116" />
-<img width="1449" height="785" alt="Dark-ArchiveStudio-Screenshot-Tauri" src="https://github.com/user-attachments/assets/78d5af81-c247-4fa5-9bab-a20b6d76bf0f" />
-<img width="2502" height="1546" alt="image" src="https://github.com/user-attachments/assets/3c3caf70-55de-4276-835e-b10261024c05" />
 
