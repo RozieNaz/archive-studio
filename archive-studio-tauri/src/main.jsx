@@ -59,8 +59,11 @@ function titleCase(value) {
 
 function makeRow(file) {
   const filename = cleanFilename(file.name);
+  const extension = (file.name.split(".").pop() || "").toLowerCase();
   return {
     Filename: filename,
+    FilePath: file.path || "",
+    Extension: extension,
     Title: "",
     Author: "",
     DOI: "",
@@ -76,6 +79,8 @@ function makeRow(file) {
 function normaliseSavedRows(savedRows) {
   return savedRows.map((row) => ({
     ...row,
+    FilePath: row.FilePath || "",
+    Extension: row.Extension || "",
     Accuracy: row.Accuracy || row.Confidence || "",
     Bibliography: normaliseBibliographyLabels(row.Bibliography),
     Notes: row.Notes || "",
@@ -244,6 +249,18 @@ function firstIdentifier(value) {
     .find(Boolean) || "";
 }
 
+function doiFromText(value) {
+  const match = String(value || "").match(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+\b/i);
+  return match ? cleanDoi(match[0]) : "";
+}
+
+function isbnFromText(value) {
+  const matches = String(value || "").match(/\b(?:97[89][-\s]?)?(?:\d[-\s]?){9,12}[\dX]\b/gi) || [];
+  return matches
+    .map((match) => match.replace(/[-\s]/g, ""))
+    .find((match) => match.length === 10 || match.length === 13) || "";
+}
+
 function cleanDoi(value) {
   return String(value || "")
     .replace(/<\/?[^>]+>/g, "")
@@ -267,6 +284,50 @@ function authorTitleFromRow(row) {
   return {
     author: parts[0],
     title: parts.slice(1).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim(),
+  };
+}
+
+function titleAuthorFromPdfText(value) {
+  const lines = String(value || "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => stripJunk(line).replace(/\s+/g, " ").trim())
+    .filter((line) =>
+      line.length >= 6 &&
+      line.length <= 160 &&
+      !/\b(doi|isbn|copyright|abstract|contents|references|bibliography|journal|press|university|volume|issue)\b/i.test(line) &&
+      !/^\d+$/.test(line)
+    );
+  const title = lines.find((line) => line.split(/\s+/).length >= 3) || "";
+  const titleIndex = title ? lines.indexOf(title) : -1;
+  const author = lines
+    .slice(Math.max(0, titleIndex + 1), Math.max(0, titleIndex + 5))
+    .find((line) =>
+      line.split(/\s+/).length <= 8 &&
+      !/[.;:]/.test(line) &&
+      /\b[A-Z][a-z]+/.test(titleCase(line))
+    ) || "";
+  return {
+    title: title ? titleCase(title) : "",
+    author: author ? titleCase(author) : "",
+  };
+}
+
+function mergePdfClues(row, text) {
+  if (!text) return row;
+  const extracted = titleAuthorFromPdfText(text);
+  const doi = row.DOI || doiFromText(text);
+  const isbn = row.ISBN || isbnFromText(text);
+  const author = row.Author || extracted.author;
+  const title = row.Title || extracted.title;
+  const year = yearFrom(text) || yearFrom(row.Bibliography || row["Suggested Filename"]);
+  return {
+    ...row,
+    DOI: doi,
+    ISBN: isbn,
+    Author: author,
+    Title: title,
+    "Suggested Filename": author && title ? makeSuggestedFilename({ author, title, year }) : row["Suggested Filename"],
   };
 }
 
@@ -620,7 +681,7 @@ function chooseBest(filename, query, candidates, expected = {}) {
 }
 
 async function fetchMetadataForRow(row) {
-  const query = cleanSearchQuery(row.Filename || row["Suggested Filename"]);
+  const query = cleanSearchQuery(row.Title || row["Suggested Filename"] || row.Filename);
   const authorTitle = authorTitleFromRow(row);
   const candidates = [];
   for (const identifier of [row.DOI, row.ISBN].map(firstIdentifier).filter(Boolean)) {
@@ -822,8 +883,10 @@ function App() {
         break;
       }
       if (queue[index].Title && queue[index].Accuracy) continue;
+      setStatus(`Reading PDF text ${index + 1}/${queue.length}`);
+      const enriched = await enrichRowWithPdfText(queue[index]);
       setStatus(`Fetching metadata ${index + 1}/${queue.length}`);
-      const fetched = await fetchMetadataForRow(queue[index]);
+      const fetched = await fetchMetadataForRow(enriched);
       if (stopFetch.current) {
         setStatus("Metadata fetch stopped.");
         break;
@@ -840,6 +903,22 @@ function App() {
     if (!isFetching) return;
     stopFetch.current = true;
     setStatus("Stopping metadata fetch...");
+  }
+
+  async function enrichRowWithPdfText(row) {
+    if (row.PdfTextChecked || row.Extension !== "pdf" || !row.FilePath) return row;
+    try {
+      const text = await invoke("extract_pdf_text", { path: row.FilePath, maxPages: 5 });
+      return {
+        ...mergePdfClues(row, text),
+        PdfTextChecked: true,
+      };
+    } catch {
+      return {
+        ...row,
+        PdfTextChecked: true,
+      };
+    }
   }
 
   function updateSelected(field, value) {
@@ -1019,7 +1098,7 @@ function App() {
     if (!row || row.Locked) return;
     setIsFetching(true);
     setStatus("Quick checking selected entry online...");
-    const cleaned = cleanEntry(row);
+    const cleaned = cleanEntry(await enrichRowWithPdfText(row));
     const lookupRow = {
       ...cleaned,
       Filename: [cleaned.Author, cleaned.Title, cleaned.DOI, cleaned.ISBN].filter(Boolean).join(" "),

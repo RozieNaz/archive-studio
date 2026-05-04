@@ -8,6 +8,7 @@ This is the Tauri version of the app.
 
 - Scan whole folders of academic files.
 - Clean filenames by removing archive junk, symbols, extensions, and messy spacing.
+- Extract text from the first five PDF pages locally, then use DOI, ISBN, title, and author clues for metadata lookup.
 - Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, and Open Library.
 - Edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
 - Use right-click formatting for bold and italic text in editable fields.
