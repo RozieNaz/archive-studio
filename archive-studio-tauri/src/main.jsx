@@ -77,16 +77,24 @@ function makeRow(file) {
 }
 
 function normaliseSavedRows(savedRows) {
-  return savedRows.map((row) => ({
-    ...row,
-    FilePath: row.FilePath || "",
-    Extension: row.Extension || "",
-    Accuracy: row.Accuracy || row.Confidence || "",
-    Bibliography: normaliseBibliographyLabels(row.Bibliography),
-    Notes: row.Notes || "",
-    Locked: Boolean(row.Locked),
-    Confidence: undefined,
-  }));
+  return savedRows.map((row) => {
+    const normalised = {
+      ...row,
+      FilePath: row.FilePath || "",
+      Extension: row.Extension || "",
+      Accuracy: row.Accuracy || row.Confidence || "",
+      Bibliography: normaliseBibliographyLabels(row.Bibliography),
+      Notes: row.Notes || "",
+      Locked: Boolean(row.Locked),
+      Confidence: undefined,
+    };
+    const assessed = assessLocalAccuracy(normalised);
+    return {
+      ...normalised,
+      ...cleanEntry(normalised),
+      Accuracy: !normalised.Accuracy || normalised.Accuracy === "Zero" ? assessed : normalised.Accuracy,
+    };
+  });
 }
 
 function normaliseBibliographyLabels(value) {
@@ -281,10 +289,24 @@ function authorTitleFromRow(row) {
   const parts = source.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
   if (parts.length < 2) return { author: "", title: "" };
 
+  const left = parts[0];
+  const right = parts.slice(1).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim();
+  if (!directAuthor && !directTitle && !looksLikePersonName(left) && looksLikePersonName(right)) {
+    return { author: right, title: left };
+  }
+
   return {
-    author: parts[0],
-    title: parts.slice(1).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim(),
+    author: left,
+    title: right,
   };
+}
+
+function looksLikePersonName(value) {
+  const text = stripJunk(value).replace(/\b(et al|edited by|ed\.?)\b/gi, "").trim();
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 5) return false;
+  if (/\b(history|introduction|dictionary|encyclopaedia|studies|journal|review|volume|religion|islam|qur|theory|politics)\b/i.test(text)) return false;
+  return words.filter((word) => /^[A-Z][a-z.'-]+$/.test(word) || /^[A-Z]\.?$/.test(word)).length >= Math.min(words.length, 3);
 }
 
 function titleAuthorFromPdfText(value) {
@@ -406,10 +428,11 @@ function shortTitle(value) {
 
 function cleanEntry(row) {
   const extracted = extractFromBibliography(row);
-  const author = row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || "";
+  const filenameIdentity = authorTitleFromRow(row);
+  const author = row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || titleCase(filenameIdentity.author);
   const title = shouldReplaceTitle(row.Title, extracted.Title, author)
     ? extracted.Title
-    : row.Title ? titleCase(stripJunk(row.Title)) : extracted.Title || "";
+    : row.Title ? titleCase(stripJunk(row.Title)) : extracted.Title || titleCase(filenameIdentity.title);
   const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title);
   const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
   const suggested = author && title && tokenOverlap(currentSuggested, title) < 0.5
@@ -425,6 +448,26 @@ function cleanEntry(row) {
     Bibliography: normaliseBibliographyLabels(stripJunk(row.Bibliography)),
     Notes: stripJunk(row.Notes),
   };
+}
+
+function usefulFieldCount(row) {
+  return ["Title", "Author", "DOI", "ISBN", "Bibliography"].filter((field) => stripJunk(row[field])).length;
+}
+
+function assessLocalAccuracy(row) {
+  const cleaned = cleanEntry(row);
+  const hasIdentity = hasUsableIdentity(cleaned);
+  const hasIdentifier = Boolean(cleaned.DOI || cleaned.ISBN);
+  const hasBibliography = Boolean(stripJunk(cleaned.Bibliography));
+  if (!hasIdentity) return "Zero";
+  if (hasIdentifier && hasBibliography) return "Medium";
+  if (hasBibliography || hasIdentifier || stripJunk(cleaned["Suggested Filename"])) return "Low";
+  return "Zero";
+}
+
+function hasMeaningfulMetadata(row) {
+  const cleaned = cleanEntry(row);
+  return cleaned.Accuracy !== "Zero" && usefulFieldCount(cleaned) >= 2 && hasUsableIdentity(cleaned);
 }
 
 function entryWarnings(row) {
@@ -455,7 +498,7 @@ function isStrongBibliography(value) {
 }
 
 function mergeCheckedRow(original, cleaned, checked) {
-  if (checked.Accuracy === "Zero") return cleaned;
+  if (checked.Accuracy === "Zero") return { ...cleaned, Accuracy: assessLocalAccuracy(cleaned) };
   const keep = (field, fallback = checked[field]) => cleaned[field] || fallback || "";
   return {
     ...cleaned,
@@ -467,7 +510,7 @@ function mergeCheckedRow(original, cleaned, checked) {
     Bibliography: cleaned.Bibliography || checked.Bibliography || "",
     Notes: cleaned.Notes || checked.Notes || "",
     Filename: original.Filename,
-    Accuracy: cleaned.Accuracy || checked.Accuracy,
+    Accuracy: checked.Accuracy || assessLocalAccuracy(cleaned),
     Locked: original.Locked,
   };
 }
@@ -714,7 +757,10 @@ async function fetchMetadataForRow(row) {
     }
   }
   const best = chooseBest(row.Filename || "", authorTitle.title || query, candidates, authorTitle);
-  if (!best) return { ...cleanEntry(row), Accuracy: "Zero" };
+  if (!best) {
+    const cleaned = cleanEntry(row);
+    return { ...cleaned, Accuracy: assessLocalAccuracy(cleaned) };
+  }
   const fileVolume = extractVolume(row.Filename || row["Suggested Filename"]);
   const bestVolume = extractVolume(best.title);
   let title = best.title;
@@ -735,7 +781,7 @@ async function fetchMetadataForRow(row) {
     Bibliography: bibliography,
     Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
   };
-  if (!hasUsableIdentity(nextRow)) return { ...nextRow, Accuracy: "Zero" };
+  if (!hasUsableIdentity(nextRow)) return { ...nextRow, Accuracy: assessLocalAccuracy(nextRow) };
   return {
     ...nextRow,
   };
@@ -776,7 +822,7 @@ function App() {
   }, [rows, searchQuery]);
   const counts = useMemo(() => {
     const total = rows.length;
-    const done = rows.filter((row) => row.Accuracy).length;
+    const done = rows.filter(hasMeaningfulMetadata).length;
     return { total, done };
   }, [rows]);
 
@@ -882,7 +928,7 @@ function App() {
         setStatus("Metadata fetch stopped.");
         break;
       }
-      if (queue[index].Title && queue[index].Accuracy) continue;
+      if (hasMeaningfulMetadata(queue[index]) && queue[index].Accuracy !== "Low") continue;
       setStatus(`Reading PDF text ${index + 1}/${queue.length}`);
       const enriched = await enrichRowWithPdfText(queue[index]);
       setStatus(`Fetching metadata ${index + 1}/${queue.length}`);
