@@ -22,7 +22,7 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 
 - Scan a local folder of PDF, EPUB, MOBI, AZW3, DJVU, DOC/DOCX, RTF, and TXT files.
 - Clean messy archive filenames and title-case entries.
-- Fetch metadata from public sources including Crossref, OpenAlex, Google Books, and Open Library.
+- Fetch metadata from public online sources.
 - Generate suggested filenames in the form `Author - Title (Year)`.
 - Generate bibliography entries and mark accuracy as High, Medium, Low, or Zero.
 - Manually edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
