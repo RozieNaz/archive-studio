@@ -87,6 +87,39 @@ p {
   color: var(--muted);
 }
 
+.status-line {
+  font-size: 14px;
+}
+
+.accuracy-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.accuracy-summary button,
+.accuracy-summary span {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.accuracy-summary button {
+  cursor: pointer;
+}
+
+.accuracy-summary button:hover,
+.accuracy-summary button.active {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 .actions {
   --toolbar-control-width: 42px;
   display: flex;
@@ -166,6 +199,10 @@ p {
 
 .wrap-button {
   font-size: 13px;
+}
+
+.accuracy-filter-button {
+  font-size: 11px;
 }
 
 .wrap-button.active {

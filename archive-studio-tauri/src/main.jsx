@@ -14,6 +14,7 @@ const DEFAULT_WIDTHS = [170, 140, 130, 130, 205, 290, 105];
 const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
 const COLLAPSED_WIDTH = 34;
 const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
+const ACCURACY_FILTERS = ["All", "High", "Medium", "Low", "Zero", "Not Set"];
 const STORAGE_KEY = "archive-studio-project";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
 const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
@@ -471,6 +472,14 @@ function hasMeaningfulMetadata(row) {
   return cleaned.Accuracy !== "Zero" && hasFetchedDetail && usefulFieldCount(cleaned) >= 2 && hasUsableIdentity(cleaned);
 }
 
+function accuracyValue(row) {
+  return row.Accuracy || "Not Set";
+}
+
+function waitForUi() {
+  return new Promise((resolve) => setTimeout(resolve, 35));
+}
+
 function entryWarnings(row) {
   const warnings = [];
   if (!row.Author) warnings.push("missing author");
@@ -799,8 +808,10 @@ function App() {
   const [sortConfig, setSortConfig] = useState({ column: "", direction: "asc" });
   const [formatMenu, setFormatMenu] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [accuracyFilter, setAccuracyFilter] = useState("All");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
   const [openMenu, setOpenMenu] = useState("");
+  const searchInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
 
@@ -813,17 +824,23 @@ function App() {
   const selectedLocked = selectedRows.length > 0 && selectedRows.every((row) => row.Locked);
   const visibleRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return rows.map((row, index) => ({ row, index }));
     return rows
       .map((row, index) => ({ row, index }))
       .filter(({ row }) =>
-        [...EXPORT_COLUMNS, "Filename"].some((column) => String(row[column] || "").toLowerCase().includes(query))
+        (accuracyFilter === "All" || accuracyValue(row) === accuracyFilter) &&
+        (!query || [...EXPORT_COLUMNS, "Filename"].some((column) => String(row[column] || "").toLowerCase().includes(query)))
       );
-  }, [rows, searchQuery]);
+  }, [rows, searchQuery, accuracyFilter]);
   const counts = useMemo(() => {
-    const total = rows.length;
-    const done = rows.filter(hasMeaningfulMetadata).length;
-    return { total, done };
+    return rows.reduce(
+      (summary, row) => {
+        summary.total += 1;
+        summary[accuracyValue(row)] += 1;
+        if (row.Locked) summary.locked += 1;
+        return summary;
+      },
+      { total: 0, High: 0, Medium: 0, Low: 0, Zero: 0, "Not Set": 0, locked: 0 }
+    );
   }, [rows]);
 
   useEffect(() => {
@@ -925,6 +942,11 @@ function App() {
     setSelectedIndexes([index]);
   }
 
+  function selectAllVisibleRows() {
+    setSelectedIndexes(visibleRows.map(({ index }) => index));
+    setStatus(`Selected ${visibleRows.length} visible entr${visibleRows.length === 1 ? "y" : "ies"}.`);
+  }
+
   function sortBy(column) {
     if (!SORTABLE_COLUMNS.has(column)) return;
     const direction =
@@ -955,6 +977,7 @@ function App() {
         setStatus("Metadata fetch stopped.");
         break;
       }
+      if (queue[index].Locked) continue;
       if (hasMeaningfulMetadata(queue[index]) && queue[index].Accuracy !== "Low") continue;
       setStatus(`Reading PDF text ${index + 1}/${queue.length}`);
       const enriched = await enrichRowWithPdfText(queue[index]);
@@ -1099,13 +1122,20 @@ function App() {
   }
 
   function toggleSelectedLocks() {
-    if (!selectedIndexes.length) return;
-    const selectedSet = new Set(selectedIndexes);
+    const indexes = selectedIndexes.length
+      ? selectedIndexes
+      : accuracyFilter === "All" ? [] : visibleRows.map(({ index }) => index);
+    if (!indexes.length) {
+      setStatus("Select entries, or choose an accuracy filter before locking a group.");
+      return;
+    }
+    const selectedSet = new Set(indexes);
     const nextLocked = !selectedLocked;
     setRows((current) =>
       current.map((row, index) => (selectedSet.has(index) ? { ...row, Locked: nextLocked } : row))
     );
-    setStatus(`${nextLocked ? "Locked" : "Unlocked"} ${selectedIndexes.length} entr${selectedIndexes.length === 1 ? "y" : "ies"}.`);
+    setSelectedIndexes(indexes);
+    setStatus(`${nextLocked ? "Locked" : "Unlocked"} ${indexes.length} entr${indexes.length === 1 ? "y" : "ies"}.`);
   }
 
   function clearUnlockedEntries() {
@@ -1141,6 +1171,13 @@ function App() {
     setOpenMenu("");
   }
 
+  function chooseAccuracyFilter(value) {
+    setAccuracyFilter(value);
+    setSelectedIndexes([]);
+    setOpenMenu("");
+    setStatus(value === "All" ? "Showing all entries." : `Showing ${value.toLowerCase()} accuracy entries.`);
+  }
+
   function cleanSelectedEntry() {
     if (selectedIndexes.length !== 1) return;
     const selectedIndex = selectedIndexes[0];
@@ -1170,27 +1207,35 @@ function App() {
     const row = rows[selectedIndex];
     if (!row || row.Locked) return;
     setIsFetching(true);
-    setStatus("Quick checking selected entry online...");
-    const cleaned = cleanEntry(await enrichRowWithPdfText(row));
-    const lookupRow = {
-      ...cleaned,
-      Filename: [cleaned.Author, cleaned.Title, cleaned.DOI, cleaned.ISBN].filter(Boolean).join(" "),
-      "Suggested Filename": [cleaned.Author, cleaned.Title, cleaned.DOI, cleaned.ISBN].filter(Boolean).join(" "),
-    };
     try {
+      setStatus("Quick Check: reading PDF text...");
+      await waitForUi();
+      const enriched = await enrichRowWithPdfText({ ...row, PdfTextChecked: false });
+      const cleaned = cleanEntry(enriched);
+      setStatus("Quick Check: searching DOI, ISBN, title, and author...");
+      await waitForUi();
+      const lookupText = [cleaned.DOI, cleaned.ISBN, cleaned.Author, cleaned.Title, cleaned["Suggested Filename"], cleaned.Filename]
+        .filter(Boolean)
+        .join(" ");
+      const lookupRow = {
+        ...cleaned,
+        Filename: lookupText,
+        "Suggested Filename": lookupText,
+      };
       const checked = await fetchMetadataForRow(lookupRow);
       const finalRow = mergeCheckedRow(row, cleaned, checked);
-      const warnings = entryWarnings(finalRow);
       setRows((current) =>
         current.map((item, index) => (index === selectedIndex ? finalRow : item))
       );
-      setStatus(warnings.length ? "Check finished. Kept extracted/local data where online lookup was not reliable." : "Check complete.");
+      const changed = ["Title", "Author", "DOI", "ISBN", "Bibliography", "Suggested Filename", "Accuracy"]
+        .some((field) => String(finalRow[field] || "") !== String(row[field] || ""));
+      setStatus(changed ? `Quick Check complete. Accuracy: ${finalRow.Accuracy || "Not Set"}.` : "Quick Check finished. No stronger match found.");
     } catch {
-      const warnings = entryWarnings(cleaned);
+      const cleaned = cleanEntry(row);
       setRows((current) =>
         current.map((item, index) => (index === selectedIndex ? cleaned : item))
       );
-      setStatus(warnings.length ? "Online check failed. Kept extracted/local data." : "Online check failed. Cleaned entry only.");
+      setStatus("Quick Check failed. Kept cleaned local data.");
     } finally {
       setIsFetching(false);
     }
@@ -1200,29 +1245,77 @@ function App() {
     const onKeyDown = (event) => {
       const tagName = event.target?.tagName;
       if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") return;
-      if ((event.key === "Delete" || (event.ctrlKey && event.key.toLowerCase() === "x")) && selectedIndexes.length) {
+      const commandKey = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (commandKey && key === "a") {
+        event.preventDefault();
+        selectAllVisibleRows();
+        return;
+      }
+      if (commandKey && key === "c") {
+        event.preventDefault();
+        copySelection("entry");
+        return;
+      }
+      if (commandKey && key === "s") {
+        event.preventDefault();
+        saveProject();
+        return;
+      }
+      if (commandKey && key === "f") {
+        event.preventDefault();
+        searchInput.current?.focus();
+        return;
+      }
+      if ((event.key === "Delete" || (commandKey && key === "x")) && selectedIndexes.length) {
         event.preventDefault();
         deleteSelectedEntries();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedIndexes, rows]);
+  }, [selectedIndexes, rows, visibleRows]);
 
   return (
     <main className={isDark ? "app dark" : "app"}>
       <header className="topbar">
         <div className="brand">
           <h1>Archive Studio</h1>
-          <p>{counts.total ? `${counts.done}/${counts.total} entries have metadata - ${status}` : status}</p>
+          <p className="status-line">{status}</p>
+          {counts.total > 0 && (
+            <div className="accuracy-summary" aria-label="Accuracy counts">
+              {["High", "Medium", "Low", "Zero", "Not Set"].map((value) => (
+                <button key={value} className={accuracyFilter === value ? "active" : ""} onClick={() => chooseAccuracyFilter(value)}>
+                  {value}: {counts[value]}
+                </button>
+              ))}
+              <button className={accuracyFilter === "All" ? "active" : ""} onClick={() => chooseAccuracyFilter("All")}>All: {counts.total}</button>
+              {counts.locked > 0 && <span>Locked: {counts.locked}</span>}
+            </div>
+          )}
         </div>
         <div className="actions">
-          <input className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
+          <input ref={searchInput} className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
           <button title="Open Folder" onClick={chooseFolderAndScan}><Icon name="folder" /></button>
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
           <button title="Save" onClick={saveProject} disabled={!rows.length}><Icon name="save" /></button>
-          <button title={selectedLocked ? "Unlock Selected" : "Lock Selected"} onClick={toggleSelectedLocks} disabled={!selectedRows.length}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
+          <div className="select-menu compact-select">
+            <button className="accuracy-filter-button" title="Filter Accuracy" disabled={!rows.length} onClick={(event) => {
+              event.stopPropagation();
+              setOpenMenu(openMenu === "filter" ? "" : "filter");
+            }}>{accuracyFilter === "Medium" ? "Med" : accuracyFilter === "Not Set" ? "None" : accuracyFilter}</button>
+            {openMenu === "filter" && (
+              <div className="select-list">
+                {ACCURACY_FILTERS.map((option) => (
+                  <button key={option} className={accuracyFilter === option ? "selected-option" : ""} onClick={() => chooseAccuracyFilter(option)}>
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button title={selectedRows.length ? (selectedLocked ? "Unlock Selected" : "Lock Selected") : "Lock Current Accuracy Filter"} onClick={toggleSelectedLocks} disabled={!selectedRows.length && accuracyFilter === "All"}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
           <button className="csv-button" title="Export CSV" onClick={exportCsv} disabled={!rows.length}>CSV</button>
           <button className={wrap ? "wrap-button active" : "wrap-button"} title="Wrap Text" onClick={() => setWrap((current) => !current)}>|↩|</button>
           <div className="select-menu compact-select">
