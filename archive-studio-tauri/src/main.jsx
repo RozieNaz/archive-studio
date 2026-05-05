@@ -1229,13 +1229,13 @@ function App() {
       );
       const changed = ["Title", "Author", "DOI", "ISBN", "Bibliography", "Suggested Filename", "Accuracy"]
         .some((field) => String(finalRow[field] || "") !== String(row[field] || ""));
-      setStatus(changed ? `Quick Check complete. Accuracy: ${finalRow.Accuracy || "Not Set"}.` : "Quick Check finished. No stronger match found.");
+      setStatus(changed ? `Quick Check updated entry. Accuracy: ${finalRow.Accuracy || "Not Set"}.` : "Quick Check complete. No updates found.");
     } catch {
       const cleaned = cleanEntry(row);
       setRows((current) =>
         current.map((item, index) => (index === selectedIndex ? cleaned : item))
       );
-      setStatus("Quick Check failed. Kept cleaned local data.");
+      setStatus("Quick Check failed. No updates found.");
     } finally {
       setIsFetching(false);
     }
