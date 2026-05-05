@@ -1,0 +1,19 @@
+{
+  "record_count": 23801,
+  "sources": {
+    "DOAB": 7588,
+    "DOAJ Journal": 2879,
+    "OAPEN": 12816,
+    "PDF Bibliography": 389,
+    "Prepared Bibliography": 129
+  },
+  "warnings": [
+    {
+      "file": "Pdf Bibliography.csv",
+      "row": 121,
+      "author": "Emotional Toolbox 0",
+      "title": "1",
+      "reason": "missing/short title"
+    }
+  ]
+}

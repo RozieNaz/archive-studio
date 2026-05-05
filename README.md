@@ -23,7 +23,8 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 - Scan a local folder of PDF, EPUB, MOBI, AZW3, DJVU, DOC/DOCX, RTF, and TXT files.
 - Clean messy archive filenames and title-case entries.
 - Extract text from the first five PDF pages locally, then use DOI, ISBN, title, and author clues before filename fallback.
-- Fetch metadata from public online sources.
+- Search an embedded topic-focused metadata index before falling back to public online sources.
+- Fetch metadata from public online sources when the local index is not reliable enough.
 - Generate suggested filenames in the form `Author - Title (Year)`.
 - Generate bibliography entries and mark accuracy as High, Medium, Low, or Zero.
 - Manually edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
@@ -60,6 +61,7 @@ Requirements:
 ```powershell
 cd archive-studio-tauri
 npm install
+npm run build:index
 .\build-tauri-windows.cmd
 ```
 
@@ -71,4 +73,4 @@ archive-studio-tauri\src-tauri\target\release\bundle\nsis\Archive Studio_0.2.0_x
 
 ## Notes
 
-Files stay local. Metadata lookup uses public online sources.
+Files stay local. Archive Studio includes a compact metadata index built from distribution-safe CSV title lists, then falls back to public online sources when needed. The raw CSV title lists are not included in the repository.

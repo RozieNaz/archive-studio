@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import metadataIndex from "./data/metadata-index.json";
 import "./styles.css";
 
 const COLUMNS = ["Title", "Author", "DOI", "ISBN", "Suggested Filename", "Bibliography", "Accuracy"];
@@ -706,6 +707,56 @@ async function searchZoteroTranslationServer(identifier) {
   return items.map(mapZoteroItem).filter((item) => item.title);
 }
 
+function splitIdentifiers(value) {
+  return String(value || "")
+    .split(/[,\n;|]/)
+    .map((part) => part.replace(/[-\s]/g, "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function searchLocalMetadataIndex(row, query, expected = {}) {
+  const doi = cleanDoi(row.DOI);
+  const isbnSet = new Set(splitIdentifiers(row.ISBN));
+  const filename = row.Filename || row["Suggested Filename"] || "";
+  const titleQuery = expected.title || query || filename;
+  return metadataIndex
+    .map((record) => {
+      const recordDoi = cleanDoi(record.doi);
+      const recordIsbns = splitIdentifiers(record.isbn);
+      const titleScore = tokenOverlap(titleQuery, record.title);
+      const authorScore = expected.author && record.author
+        ? tokenOverlap(expected.author, record.author)
+        : tokenOverlap(filename, record.author || "");
+      let score = 0;
+      if (doi && recordDoi && (doi === recordDoi || doi.includes(recordDoi) || recordDoi.includes(doi))) score = 100;
+      if ([...isbnSet].some((isbn) => recordIsbns.includes(isbn))) score = Math.max(score, 95);
+      if (!score) {
+        if (titleScore < 0.36 && authorScore < 0.35) return null;
+        score = titleScore * 68 + authorScore * 28;
+        if (record.year && filename.includes(String(record.year))) score += 6;
+        if (record.doi || record.isbn) score += 4;
+        if (record.source === "PDF Bibliography" || record.source === "Prepared Bibliography") score += 10;
+      }
+      if (score < 30) return null;
+      return {
+        source: `Local Index: ${record.source || "Metadata"}`,
+        title: record.title || "",
+        author: record.author || "",
+        year: record.year || "",
+        publisher: record.publisher || "",
+        publication: record.publication || "",
+        doi: record.doi || "",
+        isbn: record.isbn || "",
+        bibliography: record.bibliography || "",
+        score,
+        accuracy: score >= 80 ? "High" : score >= 50 ? "Medium" : "Low",
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 20);
+}
+
 function chooseBest(filename, query, candidates, expected = {}) {
   const fileVolume = extractVolume(filename);
   const scored = candidates
@@ -733,10 +784,41 @@ function chooseBest(filename, query, candidates, expected = {}) {
   return best && best.score >= 55 ? best : null;
 }
 
+function metadataRowFromBest(row, best) {
+  const fileVolume = extractVolume(row.Filename || row["Suggested Filename"]);
+  const bestVolume = extractVolume(best.title);
+  let title = best.title;
+  if (fileVolume && bestVolume && fileVolume !== bestVolume) {
+    title = row.Filename || best.title;
+  } else if (fileVolume && !bestVolume) {
+    title = `${best.title}, ${volumeLabel(row.Filename || row["Suggested Filename"])}`;
+  }
+  const output = { ...best, title };
+  const bibliography = best.bibliography || makeBibliography(output);
+  const nextRow = {
+    ...row,
+    Title: titleCase(output.title),
+    Author: titleCase(best.author),
+    DOI: best.doi,
+    ISBN: best.isbn,
+    "Suggested Filename": makeSuggestedFilename(output),
+    Bibliography: bibliography,
+    Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
+  };
+  if (!hasUsableIdentity(nextRow)) return { ...nextRow, Accuracy: assessLocalAccuracy(nextRow) };
+  return {
+    ...nextRow,
+  };
+}
+
 async function fetchMetadataForRow(row) {
   const query = cleanSearchQuery(row.Title || row["Suggested Filename"] || row.Filename);
   const authorTitle = authorTitleFromRow(row);
   const candidates = [];
+  const localCandidates = searchLocalMetadataIndex(row, query, authorTitle);
+  const localBest = chooseBest(row.Filename || "", authorTitle.title || query, localCandidates, authorTitle);
+  if (localBest && localBest.score >= 70) return metadataRowFromBest(row, localBest);
+  candidates.push(...localCandidates);
   for (const identifier of [row.DOI, row.ISBN].map(firstIdentifier).filter(Boolean)) {
     try {
       candidates.push(...(await searchZoteroTranslationServer(identifier)));
@@ -771,30 +853,7 @@ async function fetchMetadataForRow(row) {
     const cleaned = cleanEntry(row);
     return { ...cleaned, Accuracy: assessLocalAccuracy(cleaned) };
   }
-  const fileVolume = extractVolume(row.Filename || row["Suggested Filename"]);
-  const bestVolume = extractVolume(best.title);
-  let title = best.title;
-  if (fileVolume && bestVolume && fileVolume !== bestVolume) {
-    title = row.Filename || best.title;
-  } else if (fileVolume && !bestVolume) {
-    title = `${best.title}, ${volumeLabel(row.Filename || row["Suggested Filename"])}`;
-  }
-  const output = { ...best, title };
-  const bibliography = makeBibliography(output);
-  const nextRow = {
-    ...row,
-    Title: titleCase(output.title),
-    Author: titleCase(best.author),
-    DOI: best.doi,
-    ISBN: best.isbn,
-    "Suggested Filename": makeSuggestedFilename(output),
-    Bibliography: bibliography,
-    Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
-  };
-  if (!hasUsableIdentity(nextRow)) return { ...nextRow, Accuracy: assessLocalAccuracy(nextRow) };
-  return {
-    ...nextRow,
-  };
+  return metadataRowFromBest(row, best);
 }
 
 function App() {
