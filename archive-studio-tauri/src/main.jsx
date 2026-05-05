@@ -885,7 +885,7 @@ function App() {
     return rows
       .map((row, index) => ({ row, index }))
       .filter(({ row }) =>
-        (accuracyFilter === "All" || accuracyValue(row) === accuracyFilter) &&
+        (accuracyFilter === "All" || (accuracyFilter === "Locked" ? row.Locked : accuracyValue(row) === accuracyFilter)) &&
         (!query || [...EXPORT_COLUMNS, "Filename"].some((column) => String(row[column] || "").toLowerCase().includes(query)))
       );
   }, [rows, searchQuery, accuracyFilter]);
@@ -1195,7 +1195,8 @@ function App() {
       return;
     }
     const selectedSet = new Set(indexes);
-    const nextLocked = !selectedLocked;
+    const targetRows = indexes.map((index) => rows[index]).filter(Boolean);
+    const nextLocked = !targetRows.every((row) => row.Locked);
     setRows((current) =>
       current.map((row, index) => (selectedSet.has(index) ? { ...row, Locked: nextLocked } : row))
     );
@@ -1241,7 +1242,7 @@ function App() {
     setAccuracyFilter(nextFilter);
     setSelectedIndexes([]);
     setOpenMenu("");
-    setStatus(nextFilter === "All" ? "Showing all entries." : `Showing ${nextFilter.toLowerCase()} accuracy entries.`);
+    setStatus(nextFilter === "All" ? "Showing all entries." : `Showing ${nextFilter.toLowerCase()} entries.`);
   }
 
   function cleanSelectedEntry() {
@@ -1355,7 +1356,11 @@ function App() {
                   {value}: {counts[value]}
                 </button>
               ))}
-              {counts.locked > 0 && <span>Locked: {counts.locked}</span>}
+              {counts.locked > 0 && (
+                <button className={accuracyFilter === "Locked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Locked")}>
+                  Locked: {counts.locked}
+                </button>
+              )}
             </div>
           )}
         </div>
