@@ -15,7 +15,6 @@ const DEFAULT_WIDTHS = [170, 140, 130, 130, 205, 290, 105];
 const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
 const COLLAPSED_WIDTH = 34;
 const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
-const ACCURACY_FILTERS = ["All", "High", "Medium", "Low", "Zero", "Not Set"];
 const STORAGE_KEY = "archive-studio-project";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
 const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
@@ -1030,16 +1029,23 @@ function App() {
     if (!rows.length || isFetching) return;
     stopFetch.current = false;
     setIsFetching(true);
-    const queue = rows.map((row) => ({ ...row }));
+    const queue = visibleRows
+      .filter(({ row }) => !row.Locked)
+      .filter(({ row }) => !hasMeaningfulMetadata(row) || row.Accuracy === "Low")
+      .map(({ row, index }) => ({ row: { ...row }, index }));
+    if (!queue.length) {
+      setIsFetching(false);
+      setStatus("No unlocked entries need metadata for this filter.");
+      return;
+    }
     for (let index = 0; index < queue.length; index += 1) {
       if (stopFetch.current) {
         setStatus("Metadata fetch stopped.");
         break;
       }
-      if (queue[index].Locked) continue;
-      if (hasMeaningfulMetadata(queue[index]) && queue[index].Accuracy !== "Low") continue;
+      const current = queue[index];
       setStatus(`Reading PDF text ${index + 1}/${queue.length}`);
-      const enriched = await enrichRowWithPdfText(queue[index]);
+      const enriched = await enrichRowWithPdfText(current.row);
       setStatus(`Fetching metadata ${index + 1}/${queue.length}`);
       const fetched = await fetchMetadataForRow(enriched);
       if (stopFetch.current) {
@@ -1047,7 +1053,7 @@ function App() {
         break;
       }
       setRows((current) =>
-        current.map((row) => (row.Filename === fetched.Filename ? fetched : row))
+        current.map((row, rowIndex) => (rowIndex === queue[index].index && !row.Locked ? fetched : row))
       );
     }
     setIsFetching(false);
@@ -1231,10 +1237,11 @@ function App() {
   }
 
   function chooseAccuracyFilter(value) {
-    setAccuracyFilter(value);
+    const nextFilter = accuracyFilter === value ? "All" : value;
+    setAccuracyFilter(nextFilter);
     setSelectedIndexes([]);
     setOpenMenu("");
-    setStatus(value === "All" ? "Showing all entries." : `Showing ${value.toLowerCase()} accuracy entries.`);
+    setStatus(nextFilter === "All" ? "Showing all entries." : `Showing ${nextFilter.toLowerCase()} accuracy entries.`);
   }
 
   function cleanSelectedEntry() {
@@ -1348,7 +1355,6 @@ function App() {
                   {value}: {counts[value]}
                 </button>
               ))}
-              <button className={accuracyFilter === "All" ? "active" : ""} onClick={() => chooseAccuracyFilter("All")}>All: {counts.total}</button>
               {counts.locked > 0 && <span>Locked: {counts.locked}</span>}
             </div>
           )}
@@ -1359,21 +1365,6 @@ function App() {
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
           <button title="Save" onClick={saveProject} disabled={!rows.length}><Icon name="save" /></button>
-          <div className="select-menu compact-select">
-            <button className="accuracy-filter-button" title="Filter Accuracy" disabled={!rows.length} onClick={(event) => {
-              event.stopPropagation();
-              setOpenMenu(openMenu === "filter" ? "" : "filter");
-            }}>{accuracyFilter === "Medium" ? "Med" : accuracyFilter === "Not Set" ? "None" : accuracyFilter}</button>
-            {openMenu === "filter" && (
-              <div className="select-list">
-                {ACCURACY_FILTERS.map((option) => (
-                  <button key={option} className={accuracyFilter === option ? "selected-option" : ""} onClick={() => chooseAccuracyFilter(option)}>
-                    {option}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
           <button title={selectedRows.length ? (selectedLocked ? "Unlock Selected" : "Lock Selected") : "Lock Current Accuracy Filter"} onClick={toggleSelectedLocks} disabled={!selectedRows.length && accuracyFilter === "All"}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
           <button className="csv-button" title="Export CSV" onClick={exportCsv} disabled={!rows.length}>CSV</button>
           <button className={wrap ? "wrap-button active" : "wrap-button"} title="Wrap Text" onClick={() => setWrap((current) => !current)}>|↩|</button>
