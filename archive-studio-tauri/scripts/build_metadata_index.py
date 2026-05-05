@@ -28,8 +28,20 @@ def clean(value):
     return re.sub(r"\s+", " ", str(value or "").strip())
 
 
+def clean_archive_junk(value):
+    text = re.sub(
+        r"\b(z[-_\s]*library|zlib|1lib|libgen|pdf\s*drive|pdfdrive|dokumenhub|anna'?s?\s*archive|archive\.org)\b",
+        " ",
+        str(value or ""),
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s*-\s*(?:\.com)?\s*([.,;:]|$)", r"\1", text)
+    text = text.replace(".com", "")
+    return clean(text)
+
+
 def normalise(value):
-    return re.sub(r"[^a-z0-9]+", " ", clean(value).lower()).strip()
+    return re.sub(r"[^a-z0-9]+", " ", clean_archive_junk(value).lower()).strip()
 
 
 def year_from(value):
@@ -88,9 +100,9 @@ def build_index():
         )
 
     for row_number, row in enumerate(read_csv("Pdf Bibliography.csv"), start=2):
-        author = clean(row.get("author"))
-        title = clean(row.get("title"))
-        bibliography = clean(row.get("full Chicago citation"))
+        author = clean_archive_junk(row.get("author"))
+        title = clean_archive_junk(row.get("title"))
+        bibliography = clean_archive_junk(row.get("full Chicago citation"))
         reasons = []
         if len(author) < 3:
             reasons.append("missing/short author")

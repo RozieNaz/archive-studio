@@ -287,6 +287,13 @@ function authorTitleFromRow(row) {
   if (directAuthor && directTitle) return { author: directAuthor, title: directTitle };
 
   const source = stripJunk(row["Suggested Filename"] || row.Filename || "");
+  const byMatch = source.match(/^(.+?)\s+-\s+by\s+-\s+(.+)$/i) || source.match(/^(.+?)\s+\bby\b\s+(.+)$/i);
+  if (byMatch) {
+    return {
+      author: stripJunk(byMatch[2]),
+      title: stripJunk(byMatch[1]),
+    };
+  }
   const parts = source.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
   if (parts.length < 2) return { author: "", title: "" };
 
@@ -830,18 +837,23 @@ function searchLocalMetadataIndex(row, query, expected = {}) {
       const recordDoi = cleanDoi(record.doi);
       const recordIsbns = splitIdentifiers(record.isbn);
       const titleScore = tokenOverlap(titleQuery, record.title);
+      const filenameTitleScore = tokenOverlap(filename, record.title);
       const authorScore = expected.author && record.author
         ? tokenOverlap(expected.author, record.author)
         : tokenOverlap(filename, record.author || "");
+      const filenameAuthorScore = tokenOverlap(filename, record.author || "");
+      const sourceBoost = record.source === "PDF Bibliography" || record.source === "Prepared Bibliography" ? 12 : 0;
       let score = 0;
       if (doi && recordDoi && (doi === recordDoi || doi.includes(recordDoi) || recordDoi.includes(doi))) score = 100;
       if ([...isbnSet].some((isbn) => recordIsbns.includes(isbn))) score = Math.max(score, 95);
       if (!score) {
-        if (titleScore < 0.36 && authorScore < 0.35) return null;
-        score = titleScore * 68 + authorScore * 28;
+        const bestTitleScore = Math.max(titleScore, filenameTitleScore);
+        const bestAuthorScore = Math.max(authorScore, filenameAuthorScore);
+        const trustedIndexHit = sourceBoost && bestTitleScore >= 0.28 && (bestAuthorScore >= 0.2 || tokenOverlap(filename, `${record.author} ${record.title}`) >= 0.38);
+        if (!trustedIndexHit && bestTitleScore < 0.36 && bestAuthorScore < 0.35) return null;
+        score = bestTitleScore * 68 + bestAuthorScore * 28 + sourceBoost;
         if (record.year && filename.includes(String(record.year))) score += 6;
         if (record.doi || record.isbn) score += 4;
-        if (record.source === "PDF Bibliography" || record.source === "Prepared Bibliography") score += 10;
       }
       if (score < 30) return null;
       return {
