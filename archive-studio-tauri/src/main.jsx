@@ -385,7 +385,7 @@ function stripJunk(value) {
 }
 
 function authorFromBibliography(value) {
-  const firstPart = stripJunk(value).split(".")[0]?.trim() || "";
+  const firstPart = bibliographyParts(value).author;
   if (!firstPart || /\b(doi|isbn|journal|press|publisher)\b/i.test(firstPart)) return "";
   const commaMatch = firstPart.match(/^([^,]+),\s*(.+)$/);
   if (commaMatch) return titleCase(`${commaMatch[2]} ${commaMatch[1]}`);
@@ -393,9 +393,7 @@ function authorFromBibliography(value) {
 }
 
 function titleFromBibliography(value) {
-  const parts = stripJunk(value).split(".").map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 2) return "";
-  return titleCase(parts[1]);
+  return titleCase(bibliographyParts(value).title);
 }
 
 function shouldReplaceTitle(currentTitle, extractedTitle, author) {
@@ -411,8 +409,43 @@ function shouldReplaceTitle(currentTitle, extractedTitle, author) {
 }
 
 function doiFromBibliography(value) {
-  const match = normaliseBibliographyLabels(value).match(/\bDOI:\s*(10\.[^.]+(?:\.[^.]+)*)/i);
-  return match ? cleanDoi(match[1]) : "";
+  return doiFromText(normaliseBibliographyLabels(value));
+}
+
+function splitBibliographySentences(value) {
+  const protectedText = stripJunk(value)
+    .replace(/\b([A-Z])\./g, "$1<dot>")
+    .replace(/\b(no|vol|ed|eds|trans)\./gi, "$1<dot>");
+  return protectedText
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.replace(/<dot>/g, ".").replace(/[.!?]+$/g, "").trim())
+    .filter(Boolean);
+}
+
+function cleanBibliographyTitle(value) {
+  return stripJunk(value)
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function bibliographyParts(value) {
+  const raw = normaliseBibliographyLabels(String(value || ""));
+  const htmlTitle = raw.match(/<i>([^<]{4,250})<\/i>/i)?.[1] || "";
+  const quotedTitle = raw.match(/[“"]([^”"]{4,250})[”"]/)?.[1] || "";
+  const markedTitle = cleanBibliographyTitle(htmlTitle || quotedTitle);
+  if (markedTitle) {
+    const markerIndex = htmlTitle
+      ? raw.toLowerCase().indexOf("<i>")
+      : Math.max(raw.indexOf("“"), raw.indexOf('"'));
+    const author = stripJunk(raw.slice(0, markerIndex)).replace(/[.!?]+$/g, "").trim();
+    return { author, title: markedTitle };
+  }
+  const parts = splitBibliographySentences(raw);
+  return {
+    author: parts[0] || "",
+    title: cleanBibliographyTitle(parts[1] || ""),
+  };
 }
 
 function extractFromBibliography(row) {
@@ -421,6 +454,7 @@ function extractFromBibliography(row) {
     Author: authorFromBibliography(row.Bibliography),
     Title: titleFromBibliography(row.Bibliography),
     DOI: doiFromBibliography(row.Bibliography),
+    ISBN: isbnFromText(row.Bibliography),
   };
 }
 
@@ -437,13 +471,20 @@ function shortTitle(value) {
 function cleanEntry(row) {
   const extracted = extractFromBibliography(row);
   const filenameIdentity = authorTitleFromRow(row);
-  const author = row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || titleCase(filenameIdentity.author);
-  const title = shouldReplaceTitle(row.Title, extracted.Title, author)
+  const hasBibliographyIdentity = Boolean(extracted.Author && extracted.Title);
+  const author = hasBibliographyIdentity
+    ? extracted.Author
+    : row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || titleCase(filenameIdentity.author);
+  const title = hasBibliographyIdentity
+    ? extracted.Title
+    : shouldReplaceTitle(row.Title, extracted.Title, author)
     ? extracted.Title
     : row.Title ? titleCase(stripJunk(row.Title)) : extracted.Title || titleCase(filenameIdentity.title);
   const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title);
   const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
-  const suggested = author && title && tokenOverlap(currentSuggested, title) < 0.5
+  const suggested = hasBibliographyIdentity
+    ? makeSuggestedFilename({ author, title, year })
+    : author && title && tokenOverlap(currentSuggested, title) < 0.5
     ? makeSuggestedFilename({ author, title, year })
     : currentSuggested || makeSuggestedFilename({ author, title, year });
   return {
@@ -451,7 +492,7 @@ function cleanEntry(row) {
     Title: title,
     Author: author,
     DOI: cleanDoi(row.DOI || extracted.DOI),
-    ISBN: stripJunk(row.ISBN),
+    ISBN: stripJunk(row.ISBN || extracted.ISBN),
     "Suggested Filename": suggested,
     Bibliography: normaliseBibliographyLabels(stripJunk(row.Bibliography)),
     Notes: stripJunk(row.Notes),
@@ -930,28 +971,29 @@ function metadataRowFromBest(row, best) {
 }
 
 async function fetchMetadataForRow(row) {
-  const query = cleanSearchQuery(row.Title || row["Suggested Filename"] || row.Filename);
-  const authorTitle = authorTitleFromRow(row);
+  const cleanedInput = cleanEntry(row);
+  const query = cleanSearchQuery(cleanedInput.Title || cleanedInput["Suggested Filename"] || cleanedInput.Filename || cleanedInput.Bibliography);
+  const authorTitle = authorTitleFromRow(cleanedInput);
   const candidates = [];
-  const localCandidates = searchLocalMetadataIndex(row, query, authorTitle);
-  const localBest = chooseBest(row.Filename || "", authorTitle.title || query, localCandidates, authorTitle);
-  if (localBest && localBest.score >= 70) return metadataRowFromBest(row, localBest);
+  const localCandidates = searchLocalMetadataIndex(cleanedInput, query, authorTitle);
+  const localBest = chooseBest(cleanedInput.Filename || cleanedInput.Bibliography || "", authorTitle.title || query, localCandidates, authorTitle);
+  if (localBest && localBest.score >= 70) return metadataRowFromBest(cleanedInput, localBest);
   candidates.push(...localCandidates);
-  for (const identifier of [row.DOI, row.ISBN].map(firstIdentifier).filter(Boolean)) {
+  for (const identifier of [cleanedInput.DOI, cleanedInput.ISBN].map(firstIdentifier).filter(Boolean)) {
     try {
       candidates.push(...(await searchZoteroTranslationServer(identifier)));
     } catch {
       // Zotero Translation Server is optional; fall back if it is not running.
     }
   }
-  if (row.DOI) {
+  if (cleanedInput.DOI) {
     try {
-      candidates.push(...(await searchCrossrefByDoi(row.DOI)));
+      candidates.push(...(await searchCrossrefByDoi(cleanedInput.DOI)));
     } catch {
       // Keep going if DOI lookup fails.
     }
   }
-  for (const isbn of splitIdentifiers(row.ISBN).filter(isLikelyIsbn).slice(0, 3)) {
+  for (const isbn of splitIdentifiers(cleanedInput.ISBN).filter(isLikelyIsbn).slice(0, 3)) {
     try {
       candidates.push(...(await searchGoogleBooksByIsbn(isbn)));
       candidates.push(...(await searchOpenLibraryByIsbn(isbn)));
@@ -960,7 +1002,7 @@ async function fetchMetadataForRow(row) {
     }
   }
   try {
-    candidates.push(...(await searchArchiveByIdentifier(archiveIdentifierFromRow(row))));
+    candidates.push(...(await searchArchiveByIdentifier(archiveIdentifierFromRow(cleanedInput))));
   } catch {
     // Internet Archive identifiers are optional clues.
   }
@@ -981,12 +1023,11 @@ async function fetchMetadataForRow(row) {
       // Keep fetching other rows if one public source blocks or times out.
     }
   }
-  const best = chooseBest(row.Filename || "", authorTitle.title || query, candidates, authorTitle);
+  const best = chooseBest(cleanedInput.Filename || cleanedInput.Bibliography || "", authorTitle.title || query, candidates, authorTitle);
   if (!best) {
-    const cleaned = cleanEntry(row);
-    return { ...cleaned, Accuracy: assessLocalAccuracy(cleaned) };
+    return { ...cleanedInput, Accuracy: assessLocalAccuracy(cleanedInput) };
   }
-  return metadataRowFromBest(row, best);
+  return metadataRowFromBest(cleanedInput, best);
 }
 
 function App() {
@@ -1165,7 +1206,7 @@ function App() {
     setIsFetching(true);
     const queue = visibleRows
       .filter(({ row }) => !row.Locked)
-      .filter(({ row }) => !hasMeaningfulMetadata(row) || row.Accuracy === "Low")
+      .filter(({ row }) => accuracyValue(row) !== "High")
       .map(({ row, index }) => ({ row: { ...row }, index }));
     if (!queue.length) {
       setIsFetching(false);
@@ -1415,7 +1456,7 @@ function App() {
       const cleaned = cleanEntry(enriched);
       setStatus("Quick Check: searching DOI, ISBN, title, and author...");
       await waitForUi();
-      const lookupText = [cleaned.DOI, cleaned.ISBN, cleaned.Author, cleaned.Title, cleaned["Suggested Filename"], cleaned.Filename]
+      const lookupText = [cleaned.DOI, cleaned.ISBN, cleaned.Author, cleaned.Title, cleaned.Bibliography, cleaned["Suggested Filename"], cleaned.Filename]
         .filter(Boolean)
         .join(" ");
       const lookupRow = {
