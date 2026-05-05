@@ -59,7 +59,7 @@ function titleCase(value) {
 
 function makeRow(file) {
   const filename = cleanFilename(file.name);
-  const extension = (file.name.split(".").pop() || "").toLowerCase();
+  const extension = (file.extension || file.name.split(".").pop() || "").toLowerCase();
   return {
     Filename: filename,
     FilePath: file.path || "",
@@ -467,7 +467,8 @@ function assessLocalAccuracy(row) {
 
 function hasMeaningfulMetadata(row) {
   const cleaned = cleanEntry(row);
-  return cleaned.Accuracy !== "Zero" && usefulFieldCount(cleaned) >= 2 && hasUsableIdentity(cleaned);
+  const hasFetchedDetail = Boolean(cleaned.DOI || cleaned.ISBN || stripJunk(cleaned.Bibliography));
+  return cleaned.Accuracy !== "Zero" && hasFetchedDetail && usefulFieldCount(cleaned) >= 2 && hasUsableIdentity(cleaned);
 }
 
 function entryWarnings(row) {
@@ -800,7 +801,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
   const [openMenu, setOpenMenu] = useState("");
-  const folderInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
 
@@ -868,24 +868,51 @@ function App() {
     );
   }
 
-  function scanFiles(files) {
+  function addScannedFiles(files) {
     const existing = new Set(rows.map((row) => row.Filename));
+    const scannedRows = Array.from(files)
+      .filter((file) => SUPPORTED_EXTENSIONS.has((file.extension || file.name.split(".").pop() || "").toLowerCase()))
+      .map(makeRow);
     const next = [...rows];
     let added = 0;
+    let updated = 0;
 
-    Array.from(files)
-      .filter((file) => SUPPORTED_EXTENSIONS.has((file.name.split(".").pop() || "").toLowerCase()))
-      .forEach((file) => {
-        const row = makeRow(file);
+    scannedRows.forEach((row) => {
         if (!existing.has(row.Filename)) {
           next.push(row);
           existing.add(row.Filename);
           added += 1;
+          return;
+        }
+        const existingIndex = next.findIndex((item) => item.Filename === row.Filename);
+        if (existingIndex >= 0 && row.FilePath && !next[existingIndex].FilePath) {
+          next[existingIndex] = {
+            ...next[existingIndex],
+            FilePath: row.FilePath,
+            Extension: row.Extension,
+            PdfTextChecked: false,
+          };
+          updated += 1;
         }
       });
 
     setRows(next);
-    setStatus(`Scan complete. Added ${added} new files. Total: ${next.length}.`);
+    setStatus(`Scan complete. Added ${added} new files, updated ${updated} existing file paths. Total: ${next.length}.`);
+  }
+
+  async function chooseFolderAndScan() {
+    if (isFetching) return;
+    setStatus("Choose a folder to scan...");
+    try {
+      const files = await invoke("scan_folder");
+      if (!files.length) {
+        setStatus("No folder selected, or no supported files found.");
+        return;
+      }
+      addScannedFiles(files);
+    } catch (error) {
+      setStatus(`Folder scan failed: ${error}`);
+    }
   }
 
   function selectRow(index, event) {
@@ -1191,7 +1218,7 @@ function App() {
         </div>
         <div className="actions">
           <input className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
-          <button title="Open Folder" onClick={() => folderInput.current?.click()}><Icon name="folder" /></button>
+          <button title="Open Folder" onClick={chooseFolderAndScan}><Icon name="folder" /></button>
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
           <button title="Save" onClick={saveProject} disabled={!rows.length}><Icon name="save" /></button>
@@ -1217,7 +1244,6 @@ function App() {
           </button>
           <button className="danger" onClick={clearUnlockedEntries} disabled={!rows.length}>Clear</button>
         </div>
-        <input ref={folderInput} hidden type="file" webkitdirectory="true" multiple onChange={(event) => scanFiles(event.target.files)} />
         <input ref={projectInput} hidden type="file" accept=".json,.archive-studio.json" onChange={(event) => event.target.files?.[0] && openProject(event.target.files[0])} />
       </header>
 
