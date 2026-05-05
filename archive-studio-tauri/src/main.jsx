@@ -567,6 +567,17 @@ async function searchGoogleBooks(query) {
   });
 }
 
+async function searchGoogleBooksByIsbn(isbn) {
+  const cleanIsbn = String(isbn || "").replace(/[-\s]/g, "");
+  if (!cleanIsbn) return [];
+  return (await searchGoogleBooks(`isbn:${cleanIsbn}`)).map((item) => ({
+    ...item,
+    source: "Google Books ISBN",
+    score: 96,
+    accuracy: "High",
+  }));
+}
+
 async function searchOpenLibrary(query) {
   const data = await fetchJson(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`);
   return (data?.docs || []).map((item) => ({
@@ -579,6 +590,98 @@ async function searchOpenLibrary(query) {
     doi: "",
     isbn: (item.isbn || []).slice(0, 3).join(", "),
   }));
+}
+
+async function searchOpenLibraryByIsbn(isbn) {
+  const cleanIsbn = String(isbn || "").replace(/[-\s]/g, "");
+  if (!cleanIsbn) return [];
+  const data = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${encodeURIComponent(cleanIsbn)}&format=json&jscmd=data`);
+  const item = data?.[`ISBN:${cleanIsbn}`];
+  if (!item) return [];
+  return [{
+    source: "Open Library ISBN",
+    title: item.title || "",
+    author: (item.authors || []).slice(0, 3).map((author) => author.name).filter(Boolean).join(", "),
+    year: yearFrom(item.publish_date),
+    publisher: (item.publishers || [])[0]?.name || "",
+    publication: "",
+    doi: "",
+    isbn: cleanIsbn,
+    score: 94,
+    accuracy: "High",
+  }];
+}
+
+function firstMetadataValue(value) {
+  if (Array.isArray(value)) return firstMetadataValue(value[0]);
+  if (value && typeof value === "object") return firstMetadataValue(value.name || value.value || "");
+  return stripJunk(value);
+}
+
+function metadataValues(value) {
+  if (Array.isArray(value)) return value.map(firstMetadataValue).filter(Boolean);
+  const first = firstMetadataValue(value);
+  return first ? [first] : [];
+}
+
+function archiveIdentifierFromRow(row) {
+  const text = [row.Filename, row.FilePath, row.Bibliography, row.Notes].filter(Boolean).join(" ");
+  const match = text.match(/archive\.org\/(?:details|metadata)\/([A-Za-z0-9_-]{5,120})/i);
+  return match ? match[1] : "";
+}
+
+function identifiersFromMetadata(metadata) {
+  const text = [
+    metadata?.identifier,
+    metadata?.isbn,
+    metadata?.isbn10,
+    metadata?.isbn13,
+    metadata?.doi,
+    metadata?.external_identifier,
+    metadata?.["external-identifier"],
+  ].flatMap(metadataValues).join(" ");
+  return {
+    doi: cleanDoi(doiFromText(text)),
+    isbn: isbnFromText(text),
+  };
+}
+
+function mapArchiveMetadata(metadata, score = 0) {
+  const identifiers = identifiersFromMetadata(metadata || {});
+  const title = firstMetadataValue(metadata?.title);
+  if (!title) return null;
+  return {
+    source: "Internet Archive",
+    title,
+    author: metadataValues(metadata?.creator).slice(0, 3).join(", "),
+    year: yearFrom(firstMetadataValue(metadata?.date) || firstMetadataValue(metadata?.year)),
+    publisher: firstMetadataValue(metadata?.publisher),
+    publication: firstMetadataValue(metadata?.collection),
+    doi: identifiers.doi,
+    isbn: identifiers.isbn,
+    score,
+    accuracy: score >= 80 ? "High" : "Medium",
+  };
+}
+
+async function searchArchiveByIdentifier(identifier) {
+  if (!identifier) return [];
+  const data = await fetchJson(`https://archive.org/metadata/${encodeURIComponent(identifier)}`);
+  const item = mapArchiveMetadata(data?.metadata, 86);
+  return item ? [item] : [];
+}
+
+async function searchArchive(query) {
+  const safeQuery = stripJunk(query).replace(/"/g, " ").trim();
+  if (!safeQuery) return [];
+  const params = new URLSearchParams({
+    q: `title:"${safeQuery}" AND mediatype:texts`,
+    output: "json",
+    rows: "5",
+  });
+  ["identifier", "title", "creator", "date", "publisher"].forEach((field) => params.append("fl[]", field));
+  const data = await fetchJson(`https://archive.org/advancedsearch.php?${params.toString()}`);
+  return (data?.response?.docs || []).map((doc) => mapArchiveMetadata(doc, 0)).filter(Boolean);
 }
 
 async function searchOpenAlex(author, title) {
@@ -713,6 +816,10 @@ function splitIdentifiers(value) {
     .filter(Boolean);
 }
 
+function isLikelyIsbn(value) {
+  return /^(?:97[89])?\d{9}[\dx]$/i.test(String(value || ""));
+}
+
 function searchLocalMetadataIndex(row, query, expected = {}) {
   const doi = cleanDoi(row.DOI);
   const isbnSet = new Set(splitIdentifiers(row.ISBN));
@@ -832,9 +939,23 @@ async function fetchMetadataForRow(row) {
       // Keep going if DOI lookup fails.
     }
   }
+  for (const isbn of splitIdentifiers(row.ISBN).filter(isLikelyIsbn).slice(0, 3)) {
+    try {
+      candidates.push(...(await searchGoogleBooksByIsbn(isbn)));
+      candidates.push(...(await searchOpenLibraryByIsbn(isbn)));
+    } catch {
+      // Keep going if ISBN lookup fails.
+    }
+  }
+  try {
+    candidates.push(...(await searchArchiveByIdentifier(archiveIdentifierFromRow(row))));
+  } catch {
+    // Internet Archive identifiers are optional clues.
+  }
   try {
     candidates.push(...(await searchOpenAlex(authorTitle.author, authorTitle.title)));
     candidates.push(...(await searchCrossrefByAuthorTitle(authorTitle.author, authorTitle.title)));
+    candidates.push(...(await searchArchive(authorTitle.title)));
   } catch {
     // Keep going if author-title lookup fails.
   }
@@ -843,6 +964,7 @@ async function fetchMetadataForRow(row) {
       candidates.push(...(await searchCrossref(search)));
       candidates.push(...(await searchGoogleBooks(search)));
       candidates.push(...(await searchOpenLibrary(search)));
+      candidates.push(...(await searchArchive(search)));
     } catch {
       // Keep fetching other rows if one public source blocks or times out.
     }

@@ -24,7 +24,8 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 - Clean messy archive filenames and title-case entries.
 - Extract text from the first five PDF pages locally, then use DOI, ISBN, title, and author clues before filename fallback.
 - Search an embedded topic-focused metadata index before falling back to public online sources.
-- Fetch metadata from public online sources when the local index is not reliable enough.
+- Fetch metadata from public online sources including Crossref, OpenAlex, Google Books, Open Library, and Internet Archive when the local index is not reliable enough.
+- Use dedicated ISBN lookup through Google Books and Open Library when an ISBN is available.
 - Generate suggested filenames in the form `Author - Title (Year)`.
 - Generate bibliography entries and mark accuracy as High, Medium, Low, or Zero.
 - Manually edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.

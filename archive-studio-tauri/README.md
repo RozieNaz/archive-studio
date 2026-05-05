@@ -10,7 +10,8 @@ This is the Tauri version of the app.
 - Clean filenames by removing archive junk, symbols, extensions, and messy spacing.
 - Extract text from the first five PDF pages locally, then use DOI, ISBN, title, and author clues for metadata lookup.
 - Search a compact embedded metadata index for relevant academic titles before falling back to online lookup.
-- Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, and Open Library.
+- Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, Open Library, and Internet Archive.
+- Use dedicated ISBN lookups through Google Books and Open Library when an ISBN is available.
 - Edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
 - Use right-click formatting for bold and italic text in editable fields.
 - Copy bibliography, filename, or full entry.
