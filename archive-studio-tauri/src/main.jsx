@@ -133,12 +133,11 @@ function displayLabel(column) {
 }
 
 function authorTitleDisplay(row) {
-  const author = titleCase(stripJunk(row.Author));
-  const title = titleCase(stripJunk(row.Title));
-  if (author && title) return `${author} - ${title}`;
-  if (author) return author;
-  if (title) return title;
-  return titleCase(stripJunk(row["Suggested Filename"] || cleanFilename(row.Filename)));
+  const suggested = titleCase(stripJunk(row["Suggested Filename"]));
+  if (suggested && !looksBrokenIdentity(suggested)) return suggested;
+  const identity = authorTitleFromSource(cleanFilename(row.Filename));
+  if (identity.author && identity.title) return makeSuggestedFilename({ author: identity.author, title: identity.title, year: yearFrom(row.Bibliography || row.Title) });
+  return suggested || titleCase(stripJunk(row.Title || row.Author || cleanFilename(row.Filename)));
 }
 
 function cellValue(row, column) {
@@ -303,12 +302,8 @@ function cleanDoi(value) {
     .trim();
 }
 
-function authorTitleFromRow(row) {
-  const directAuthor = stripJunk(row.Author);
-  const directTitle = stripJunk(row.Title);
-  if (directAuthor && directTitle) return { author: directAuthor, title: directTitle };
-
-  const source = stripJunk(row["Suggested Filename"] || cleanFilename(row.Filename) || "");
+function authorTitleFromSource(value) {
+  const source = stripJunk(value);
   const byMatch = source.match(/^(.+?)\s+-\s+by\s+-\s+(.+)$/i) || source.match(/^(.+?)\s+\bby\b\s+(.+)$/i);
   if (byMatch) {
     return {
@@ -319,9 +314,19 @@ function authorTitleFromRow(row) {
   const parts = source.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
   if (parts.length < 2) return { author: "", title: "" };
 
+  if (parts.length >= 3) {
+    const joinedAuthor = `${parts[0]} - ${parts[1]}`;
+    if (looksLikePersonName(joinedAuthor.replace(/\s+-\s+/g, " "))) {
+      return {
+        author: joinedAuthor,
+        title: parts.slice(2).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim(),
+      };
+    }
+  }
+
   const left = parts[0];
   const right = parts.slice(1).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim();
-  if (!directAuthor && !directTitle && !looksLikePersonName(left) && looksLikePersonName(right)) {
+  if (!looksLikePersonName(left) && looksLikePersonName(right)) {
     return { author: right, title: left };
   }
 
@@ -331,12 +336,30 @@ function authorTitleFromRow(row) {
   };
 }
 
+function authorTitleFromRow(row) {
+  const directAuthor = stripJunk(row.Author);
+  const directTitle = stripJunk(row.Title);
+  if (directAuthor && directTitle && !looksBrokenIdentity(`${directAuthor} ${directTitle}`)) {
+    return { author: directAuthor, title: directTitle };
+  }
+  return authorTitleFromSource(row["Suggested Filename"] || cleanFilename(row.Filename));
+}
+
 function looksLikePersonName(value) {
   const text = stripJunk(value).replace(/\b(et al|edited by|ed\.?)\b/gi, "").trim();
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length < 2 || words.length > 5) return false;
   if (/\b(history|introduction|dictionary|encyclopaedia|studies|journal|review|volume|religion|islam|qur|theory|politics)\b/i.test(text)) return false;
   return words.filter((word) => /^[A-Z][a-z.'-]+$/.test(word) || /^[A-Z]\.?$/.test(word)).length >= Math.min(words.length, 3);
+}
+
+function looksBrokenIdentity(value) {
+  const text = stripJunk(value);
+  if (!text) return false;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.some((word) => /[a-z]{22,}/i.test(word))) return true;
+  if (words.length <= 2 && text.length > 35) return true;
+  return /[a-z]{8,}[A-Z]/.test(String(value || ""));
 }
 
 function titleAuthorFromPdfText(value) {
@@ -493,18 +516,24 @@ function shortTitle(value) {
 function cleanEntry(row) {
   const extracted = extractFromBibliography(row);
   const filenameIdentity = authorTitleFromRow(row);
+  const rawFilenameIdentity = authorTitleFromSource(cleanFilename(row.Filename));
   const hasBibliographyIdentity = Boolean(extracted.Author && extracted.Title);
+  const shouldPreferFilename = !hasBibliographyIdentity && rawFilenameIdentity.author && rawFilenameIdentity.title && looksBrokenIdentity(`${row.Author || ""} ${row.Title || ""} ${row["Suggested Filename"] || ""}`);
   const author = hasBibliographyIdentity
     ? extracted.Author
+    : shouldPreferFilename ? titleCase(rawFilenameIdentity.author)
     : row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || titleCase(filenameIdentity.author);
   const title = hasBibliographyIdentity
     ? extracted.Title
+    : shouldPreferFilename ? titleCase(rawFilenameIdentity.title)
     : shouldReplaceTitle(row.Title, extracted.Title, author)
     ? extracted.Title
     : row.Title ? titleCase(stripJunk(row.Title)) : extracted.Title || titleCase(filenameIdentity.title);
   const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title);
   const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
   const suggested = hasBibliographyIdentity
+    ? makeSuggestedFilename({ author, title, year })
+    : shouldPreferFilename
     ? makeSuggestedFilename({ author, title, year })
     : author && title && tokenOverlap(currentSuggested, title) < 0.5
     ? makeSuggestedFilename({ author, title, year })
@@ -1072,6 +1101,7 @@ function App() {
   const searchInput = useRef(null);
   const projectInput = useRef(null);
   const stopFetch = useRef(false);
+  const rowsRef = useRef(rows);
 
   const collapsedSet = useMemo(() => new Set(collapsedColumns), [collapsedColumns]);
   const activeWidths = colWidths.map((width, index) => collapsedSet.has(index) ? COLLAPSED_WIDTH : width);
@@ -1102,6 +1132,7 @@ function App() {
   }, [rows]);
 
   useEffect(() => {
+    rowsRef.current = rows;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
   }, [rows]);
 
@@ -1233,7 +1264,7 @@ function App() {
     const queue = visibleRows
       .filter(({ row }) => !row.Locked)
       .filter(({ row }) => accuracyValue(row) !== "High")
-      .map(({ row, index }) => ({ row: { ...row }, index }));
+      .map(({ row }) => ({ row: { ...row }, key: rowFileKey(row) }));
     if (!queue.length) {
       setIsFetching(false);
       setStatus("No unlocked entries need metadata for this filter.");
@@ -1245,8 +1276,10 @@ function App() {
         break;
       }
       const current = queue[index];
+      if (!rowsRef.current.some((row) => rowFileKey(row) === current.key && !row.Locked)) continue;
       setStatus(`Reading PDF text ${index + 1}/${queue.length}`);
       const enriched = await enrichRowWithPdfText(current.row);
+      if (!rowsRef.current.some((row) => rowFileKey(row) === current.key && !row.Locked)) continue;
       setStatus(`Fetching metadata ${index + 1}/${queue.length}`);
       const fetched = await fetchMetadataForRow(enriched);
       if (stopFetch.current) {
@@ -1254,7 +1287,7 @@ function App() {
         break;
       }
       setRows((current) =>
-        current.map((row, rowIndex) => (rowIndex === queue[index].index && !row.Locked ? fetched : row))
+        current.map((row) => (rowFileKey(row) === queue[index].key && !row.Locked ? { ...fetched, Filename: row.Filename, FilePath: row.FilePath } : row))
       );
     }
     setIsFetching(false);
@@ -1372,7 +1405,7 @@ function App() {
     }
     try {
       const path = await invoke("save_csv", { filename: "metadata-log.csv", contents: toCsv(rows) });
-      setStatus(`Project saved. CSV replaced at ${path}.`);
+      setStatus(`Project saved. CSV updated at ${path}.`);
     } catch (error) {
       setStatus(`Project saved locally. CSV save failed: ${error}`);
     }
@@ -1380,7 +1413,6 @@ function App() {
 
   function deleteSelectedEntries() {
     if (!selectedIndexes.length) return;
-    stopFetch.current = true;
     const remove = new Set(selectedIndexes);
     const lockedCount = selectedRows.filter((row) => row.Locked).length;
     setRows((current) => current.filter((row, index) => row.Locked || !remove.has(index)));
@@ -1568,7 +1600,15 @@ function App() {
           )}
         </div>
         <div className="actions">
-          <input ref={searchInput} className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
+          <div className="search-box">
+            <input ref={searchInput} className="search-input" value={searchQuery} placeholder="Search" onChange={(event) => setSearchQuery(event.target.value)} />
+            {searchQuery && (
+              <button className="clear-search" title="Clear Search" onClick={() => {
+                setSearchQuery("");
+                searchInput.current?.focus();
+              }}>x</button>
+            )}
+          </div>
           <button title="Open Folder" onClick={chooseFolderAndScan}><Icon name="folder" /></button>
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>

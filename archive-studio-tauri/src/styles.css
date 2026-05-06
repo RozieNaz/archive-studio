@@ -171,12 +171,30 @@ p {
   background: #d98a7a;
 }
 
+.search-box {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
 .search-input {
   width: 118px;
   min-height: var(--toolbar-control-width);
-  padding: 0 9px;
+  padding: 0 28px 0 9px;
   border-color: var(--line);
   background: var(--surface);
+}
+
+.actions .clear-search {
+  position: absolute;
+  right: 5px;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .icon {
