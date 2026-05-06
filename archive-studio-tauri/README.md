@@ -14,7 +14,7 @@ This is the Tauri version of the app.
 - Use dedicated ISBN lookups through Google Books and Open Library when an ISBN is available.
 - Edit title, author, DOI, ISBN, bibliography, accuracy, and notes. The scanned filename is shown but not edited by cleanup or metadata fetch.
 - Use right-click formatting for bold and italic text in editable fields.
-- Copy bibliography, original filename, or full entry.
+- Copy bibliography, clean author-title, or full entry.
 - Export entries to CSV.
 - Save work locally so entries remain available when the app is reopened.
 - Sort by author-title, filename, and accuracy.

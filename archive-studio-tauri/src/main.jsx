@@ -137,7 +137,7 @@ function authorTitleDisplay(row) {
   if (suggested && !looksBrokenIdentity(suggested)) return suggested;
   const identity = authorTitleFromSource(cleanFilename(row.Filename));
   if (identity.author && identity.title) return makeSuggestedFilename({ author: identity.author, title: identity.title, year: yearFrom(row.Bibliography || row.Title) });
-  return suggested || titleCase(stripJunk(row.Title || row.Author || cleanFilename(row.Filename)));
+  return suggested || cleanTitleText(row.Title || cleanFilename(row.Filename));
 }
 
 function cellValue(row, column) {
@@ -312,27 +312,30 @@ function authorTitleFromSource(value) {
     };
   }
   const parts = source.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 2) return { author: "", title: "" };
+  if (parts.length < 2) return { author: "", title: cleanTitleText(source) };
 
   if (parts.length >= 3) {
     const joinedAuthor = `${parts[0]} - ${parts[1]}`;
     if (looksLikePersonName(joinedAuthor.replace(/\s+-\s+/g, " "))) {
       return {
         author: joinedAuthor,
-        title: parts.slice(2).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim(),
+        title: cleanTitleText(parts.slice(2).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim()),
       };
     }
   }
 
   const left = parts[0];
   const right = parts.slice(1).join(" - ").replace(/\((15|16|17|18|19|20)\d{2}\)\s*$/, "").trim();
+  if (looksLikePersonName(left)) {
+    return { author: left, title: cleanTitleText(right) };
+  }
   if (!looksLikePersonName(left) && looksLikePersonName(right)) {
-    return { author: right, title: left };
+    return { author: right, title: cleanTitleText(left) };
   }
 
   return {
-    author: left,
-    title: right,
+    author: "",
+    title: cleanTitleText(source),
   };
 }
 
@@ -357,9 +360,23 @@ function looksBrokenIdentity(value) {
   const text = stripJunk(value);
   if (!text) return false;
   const words = text.split(/\s+/).filter(Boolean);
+  const hyphenParts = text.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  if (hyphenParts.length >= 3 && !looksLikePersonName(hyphenParts[0]) && !looksLikePersonName(`${hyphenParts[0]} ${hyphenParts[1]}`)) return true;
   if (words.some((word) => /[a-z]{22,}/i.test(word))) return true;
   if (words.length <= 2 && text.length > 35) return true;
   return /[a-z]{8,}[A-Z]/.test(String(value || ""));
+}
+
+function cleanTitleText(value) {
+  return titleCase(
+    stripJunk(value)
+      .replace(/\s+-\s+/g, " ")
+      .replace(/\bQur\s+Anic\b/gi, "Quranic")
+      .replace(/\bQur\s+An\b/gi, "Quran")
+      .replace(/\((15|16|17|18|19|20)\d{2}\)\s*\((15|16|17|18|19|20)\d{2}\)/g, "($2)")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
 function titleAuthorFromPdfText(value) {
@@ -506,9 +523,9 @@ function extractFromBibliography(row) {
 function shortTitle(value) {
   return stripJunk(value)
     .split(":")[0]
-    .split(" - ")[0]
     .split(". ")[0]
     .split(", ")[0]
+    .replace(/\s+-\s+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -519,6 +536,7 @@ function cleanEntry(row) {
   const rawFilenameIdentity = authorTitleFromSource(cleanFilename(row.Filename));
   const hasBibliographyIdentity = Boolean(extracted.Author && extracted.Title);
   const shouldPreferFilename = !hasBibliographyIdentity && rawFilenameIdentity.author && rawFilenameIdentity.title && looksBrokenIdentity(`${row.Author || ""} ${row.Title || ""} ${row["Suggested Filename"] || ""}`);
+  const titleOnly = !rawFilenameIdentity.author && rawFilenameIdentity.title ? rawFilenameIdentity.title : "";
   const author = hasBibliographyIdentity
     ? extracted.Author
     : shouldPreferFilename ? titleCase(rawFilenameIdentity.author)
@@ -528,7 +546,7 @@ function cleanEntry(row) {
     : shouldPreferFilename ? titleCase(rawFilenameIdentity.title)
     : shouldReplaceTitle(row.Title, extracted.Title, author)
     ? extracted.Title
-    : row.Title ? titleCase(stripJunk(row.Title)) : extracted.Title || titleCase(filenameIdentity.title);
+    : row.Title && !looksBrokenIdentity(row.Title) ? cleanTitleText(row.Title) : extracted.Title || cleanTitleText(filenameIdentity.title || titleOnly);
   const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title);
   const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
   const suggested = hasBibliographyIdentity
@@ -536,6 +554,10 @@ function cleanEntry(row) {
     : shouldPreferFilename
     ? makeSuggestedFilename({ author, title, year })
     : author && title && tokenOverlap(currentSuggested, title) < 0.5
+    ? makeSuggestedFilename({ author, title, year })
+    : !author && /\s+-\s+/.test(currentSuggested)
+    ? makeSuggestedFilename({ author, title, year })
+    : looksBrokenIdentity(currentSuggested) || tokenOverlap(currentSuggested, title) < 0.35
     ? makeSuggestedFilename({ author, title, year })
     : currentSuggested || makeSuggestedFilename({ author, title, year });
   return {
@@ -1374,7 +1396,7 @@ function App() {
     const text = selectedRows
       .map((row) => {
         if (kind === "bibliography") return row.Bibliography || "";
-        if (kind === "filename") return row.Filename || "";
+        if (kind === "authorTitle") return authorTitleDisplay(row);
         return rowToText(row);
       })
       .filter(Boolean)
@@ -1624,7 +1646,7 @@ function App() {
             {openMenu === "copy" && (
               <div className="select-list">
                 <button onClick={() => chooseCopy("bibliography")}>Bibliography</button>
-                <button onClick={() => chooseCopy("filename")}>Filename</button>
+                <button onClick={() => chooseCopy("authorTitle")}>Author - Title</button>
                 <button onClick={() => chooseCopy("entry")}>Entry</button>
               </div>
             )}

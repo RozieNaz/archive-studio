@@ -32,7 +32,7 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 - Use right-click formatting for bold and italic text in editable fields.
 - Search entries, sort by author-title/filename/accuracy, resize columns, collapse columns, and wrap table text.
 - Select multiple entries with Ctrl for copy, lock, and delete workflows.
-- Copy bibliography, original filename, or entire entries.
+- Copy bibliography, clean author-title, or entire entries.
 - Lock entries to protect them from editing, deleting, or clearing.
 - Save entries locally so they are still there when the app is reopened.
 - Save/export a CSV file to Downloads as `metadata-log.csv`.
