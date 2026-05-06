@@ -4,15 +4,16 @@ import { invoke } from "@tauri-apps/api/core";
 import metadataIndex from "./data/metadata-index.json";
 import "./styles.css";
 
-const COLUMNS = ["Title", "Author", "DOI", "ISBN", "Suggested Filename", "Bibliography", "Accuracy"];
+const COLUMNS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const NOTE_FIELD = "Notes";
 const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
+const EDITOR_FIELDS = ["Author", "Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
-const SORTABLE_COLUMNS = new Set(["Title", "Author", "Accuracy"]);
+const SORTABLE_COLUMNS = new Set(["Author - Title", "Accuracy", "Filename"]);
 const ACCURACY_RANK = { Zero: 0, Low: 1, Medium: 2, High: 3 };
 const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt"]);
-const DEFAULT_WIDTHS = [170, 140, 130, 130, 205, 290, 105];
-const MIN_WIDTHS = [70, 80, 60, 60, 140, 120, 85];
+const DEFAULT_WIDTHS = [300, 130, 130, 320, 105, 260];
+const MIN_WIDTHS = [120, 60, 60, 120, 85, 100];
 const COLLAPSED_WIDTH = 34;
 const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
 const STORAGE_KEY = "archive-studio-project";
@@ -59,17 +60,18 @@ function titleCase(value) {
 }
 
 function makeRow(file) {
-  const filename = cleanFilename(file.name);
+  const originalFilename = file.name || "";
+  const cleanedFilename = cleanFilename(originalFilename);
   const extension = (file.extension || file.name.split(".").pop() || "").toLowerCase();
   return {
-    Filename: filename,
+    Filename: originalFilename,
     FilePath: file.path || "",
     Extension: extension,
     Title: "",
     Author: "",
     DOI: "",
     ISBN: "",
-    "Suggested Filename": filename,
+    "Suggested Filename": cleanedFilename,
     Bibliography: "",
     Accuracy: "",
     Notes: "",
@@ -83,6 +85,8 @@ function normaliseSavedRows(savedRows) {
       ...row,
       FilePath: row.FilePath || "",
       Extension: row.Extension || "",
+      Filename: row.Filename || row["Suggested Filename"] || "",
+      "Suggested Filename": row["Suggested Filename"] || cleanFilename(row.Filename || ""),
       Accuracy: row.Accuracy || row.Confidence || "",
       Bibliography: normaliseBibliographyLabels(row.Bibliography),
       Notes: row.Notes || "",
@@ -117,15 +121,33 @@ function downloadText(filename, text, type) {
 function toCsv(rows) {
   const escape = (value) => `"${String(value || "").replaceAll('"', '""')}"`;
   const headers = EXPORT_COLUMNS.map(displayLabel);
-  return [headers.join(","), ...rows.map((row) => EXPORT_COLUMNS.map((column) => escape(row[column])).join(","))].join("\n");
+  return [headers.join(","), ...rows.map((row) => EXPORT_COLUMNS.map((column) => escape(cellValue(row, column))).join(","))].join("\n");
 }
 
 function rowToText(row) {
-  return EXPORT_COLUMNS.map((column) => `${displayLabel(column)}: ${row[column] || ""}`).join("\n");
+  return EXPORT_COLUMNS.map((column) => `${displayLabel(column)}: ${cellValue(row, column)}`).join("\n");
 }
 
 function displayLabel(column) {
   return COLUMN_LABELS[column] || column;
+}
+
+function authorTitleDisplay(row) {
+  const author = titleCase(stripJunk(row.Author));
+  const title = titleCase(stripJunk(row.Title));
+  if (author && title) return `${author} - ${title}`;
+  if (author) return author;
+  if (title) return title;
+  return titleCase(stripJunk(row["Suggested Filename"] || cleanFilename(row.Filename)));
+}
+
+function cellValue(row, column) {
+  if (column === "Author - Title") return authorTitleDisplay(row);
+  return column === "Bibliography" ? normaliseBibliographyLabels(row[column]) : row[column] || "";
+}
+
+function rowFileKey(row) {
+  return row.FilePath || row.Filename || row["Suggested Filename"] || "";
 }
 
 function columnHint(column) {
@@ -286,7 +308,7 @@ function authorTitleFromRow(row) {
   const directTitle = stripJunk(row.Title);
   if (directAuthor && directTitle) return { author: directAuthor, title: directTitle };
 
-  const source = stripJunk(row["Suggested Filename"] || row.Filename || "");
+  const source = stripJunk(row["Suggested Filename"] || cleanFilename(row.Filename) || "");
   const byMatch = source.match(/^(.+?)\s+-\s+by\s+-\s+(.+)$/i) || source.match(/^(.+?)\s+\bby\b\s+(.+)$/i);
   if (byMatch) {
     return {
@@ -489,6 +511,7 @@ function cleanEntry(row) {
     : currentSuggested || makeSuggestedFilename({ author, title, year });
   return {
     ...row,
+    Filename: row.Filename,
     Title: title,
     Author: author,
     DOI: cleanDoi(row.DOI || extracted.DOI),
@@ -871,7 +894,7 @@ function isLikelyIsbn(value) {
 function searchLocalMetadataIndex(row, query, expected = {}) {
   const doi = cleanDoi(row.DOI);
   const isbnSet = new Set(splitIdentifiers(row.ISBN));
-  const filename = row.Filename || row["Suggested Filename"] || "";
+  const filename = row["Suggested Filename"] || cleanFilename(row.Filename) || "";
   const titleQuery = expected.title || query || filename;
   return metadataIndex
     .map((record) => {
@@ -944,13 +967,14 @@ function chooseBest(filename, query, candidates, expected = {}) {
 }
 
 function metadataRowFromBest(row, best) {
-  const fileVolume = extractVolume(row.Filename || row["Suggested Filename"]);
+  const sourceName = row["Suggested Filename"] || cleanFilename(row.Filename);
+  const fileVolume = extractVolume(sourceName);
   const bestVolume = extractVolume(best.title);
   let title = best.title;
   if (fileVolume && bestVolume && fileVolume !== bestVolume) {
-    title = row.Filename || best.title;
+    title = sourceName || best.title;
   } else if (fileVolume && !bestVolume) {
-    title = `${best.title}, ${volumeLabel(row.Filename || row["Suggested Filename"])}`;
+    title = `${best.title}, ${volumeLabel(sourceName)}`;
   }
   const output = { ...best, title };
   const bibliography = best.bibliography || makeBibliography(output);
@@ -974,9 +998,10 @@ async function fetchMetadataForRow(row) {
   const cleanedInput = cleanEntry(row);
   const query = cleanSearchQuery(cleanedInput.Title || cleanedInput["Suggested Filename"] || cleanedInput.Filename || cleanedInput.Bibliography);
   const authorTitle = authorTitleFromRow(cleanedInput);
+  const sourceIdentity = cleanedInput["Suggested Filename"] || cleanFilename(cleanedInput.Filename) || cleanedInput.Bibliography || "";
   const candidates = [];
   const localCandidates = searchLocalMetadataIndex(cleanedInput, query, authorTitle);
-  const localBest = chooseBest(cleanedInput.Filename || cleanedInput.Bibliography || "", authorTitle.title || query, localCandidates, authorTitle);
+  const localBest = chooseBest(sourceIdentity, authorTitle.title || query, localCandidates, authorTitle);
   if (localBest && localBest.score >= 70) return metadataRowFromBest(cleanedInput, localBest);
   candidates.push(...localCandidates);
   for (const identifier of [cleanedInput.DOI, cleanedInput.ISBN].map(firstIdentifier).filter(Boolean)) {
@@ -1023,7 +1048,7 @@ async function fetchMetadataForRow(row) {
       // Keep fetching other rows if one public source blocks or times out.
     }
   }
-  const best = chooseBest(cleanedInput.Filename || cleanedInput.Bibliography || "", authorTitle.title || query, candidates, authorTitle);
+  const best = chooseBest(sourceIdentity, authorTitle.title || query, candidates, authorTitle);
   if (!best) {
     return { ...cleanedInput, Accuracy: assessLocalAccuracy(cleanedInput) };
   }
@@ -1061,7 +1086,7 @@ function App() {
       .map((row, index) => ({ row, index }))
       .filter(({ row }) =>
         (accuracyFilter === "All" || (accuracyFilter === "Locked" ? row.Locked : accuracyValue(row) === accuracyFilter)) &&
-        (!query || [...EXPORT_COLUMNS, "Filename"].some((column) => String(row[column] || "").toLowerCase().includes(query)))
+        (!query || EXPORT_COLUMNS.some((column) => String(cellValue(row, column) || "").toLowerCase().includes(query)))
       );
   }, [rows, searchQuery, accuracyFilter]);
   const counts = useMemo(() => {
@@ -1119,7 +1144,7 @@ function App() {
   }
 
   function addScannedFiles(files) {
-    const existing = new Set(rows.map((row) => row.Filename));
+    const existing = new Set(rows.map(rowFileKey));
     const scannedRows = Array.from(files)
       .filter((file) => SUPPORTED_EXTENSIONS.has((file.extension || file.name.split(".").pop() || "").toLowerCase()))
       .map(makeRow);
@@ -1128,13 +1153,14 @@ function App() {
     let updated = 0;
 
     scannedRows.forEach((row) => {
-        if (!existing.has(row.Filename)) {
+        const key = rowFileKey(row);
+        if (!existing.has(key)) {
           next.push(row);
-          existing.add(row.Filename);
+          existing.add(key);
           added += 1;
           return;
         }
-        const existingIndex = next.findIndex((item) => item.Filename === row.Filename);
+        const existingIndex = next.findIndex((item) => rowFileKey(item) === key);
         if (existingIndex >= 0 && row.FilePath && !next[existingIndex].FilePath) {
           next[existingIndex] = {
             ...next[existingIndex],
@@ -1191,7 +1217,7 @@ function App() {
         const a =
           column === "Accuracy"
             ? (ACCURACY_RANK[left[column]] ?? -1) - (ACCURACY_RANK[right[column]] ?? -1)
-            : String(left[column] || "").localeCompare(String(right[column] || ""), undefined, { sensitivity: "base" });
+            : String(cellValue(left, column) || "").localeCompare(String(cellValue(right, column) || ""), undefined, { sensitivity: "base" });
         return direction === "asc" ? a : -a;
       })
     );
@@ -1259,6 +1285,7 @@ function App() {
 
   function updateSelected(field, value) {
     if (selectedIndexes.length !== 1) return;
+    if (field === "Filename") return;
     const selectedIndex = selectedIndexes[0];
     if (rows[selectedIndex]?.Locked) return;
     setRows((current) =>
@@ -1290,6 +1317,7 @@ function App() {
     const selectedIndex = selectedIndexes[0];
     if (rows[selectedIndex]?.Locked) return;
     const field = formatMenu.field;
+    if (field === "Filename") return;
     setRows((current) =>
       current.map((row, index) => {
         if (index !== selectedIndex) return row;
@@ -1313,7 +1341,7 @@ function App() {
     const text = selectedRows
       .map((row) => {
         if (kind === "bibliography") return row.Bibliography || "";
-        if (kind === "filename") return row["Suggested Filename"] || "";
+        if (kind === "filename") return row.Filename || "";
         return rowToText(row);
       })
       .filter(Boolean)
@@ -1596,8 +1624,8 @@ function App() {
                 <div className="empty">{rows.length ? "No entries match your search." : "Choose a folder to scan academic files."}</div>
               ) : (
                 visibleRows.map(({ row, index }) => (
-                  <button key={`${row.Filename}-${index}`} className={`${selectedIndexes.includes(index) ? "grid row selected" : "grid row"}${row.Locked ? " locked" : ""}`} style={{ gridTemplateColumns, minWidth: tableWidth }} onClick={(event) => selectRow(index, event)}>
-                    {COLUMNS.map((column, columnIndex) => <span key={column} className={collapsedSet.has(columnIndex) ? "collapsed-cell" : ""}>{collapsedSet.has(columnIndex) ? "" : renderCellText(column, row[column])}</span>)}
+                  <button key={`${rowFileKey(row)}-${index}`} className={`${selectedIndexes.includes(index) ? "grid row selected" : "grid row"}${row.Locked ? " locked" : ""}`} style={{ gridTemplateColumns, minWidth: tableWidth }} onClick={(event) => selectRow(index, event)}>
+                    {COLUMNS.map((column, columnIndex) => <span key={column} className={collapsedSet.has(columnIndex) ? "collapsed-cell" : ""}>{collapsedSet.has(columnIndex) ? "" : renderCellText(column, cellValue(row, column))}</span>)}
                   </button>
                 ))
               )}
@@ -1608,7 +1636,7 @@ function App() {
         {selected && (
           <aside className="editor">
             <h2>Selected Entry {selected.Locked ? "(Locked)" : ""}</h2>
-            {COLUMNS.map((column) => (
+            {EDITOR_FIELDS.map((column) => (
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
@@ -1634,7 +1662,7 @@ function App() {
                       )}
                     </div>
                   ) : (
-                    <input value={selected[column] || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={selected[column] || ""} disabled={selected.Locked || column === "Filename"} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )

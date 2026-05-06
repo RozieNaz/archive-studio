@@ -1,6 +1,6 @@
 # Archive Studio
 
-Archive Studio is a Windows desktop app for organising academic document collections. It scans folders, cleans messy filenames, looks up public metadata, and helps create cleaner bibliography entries and suggested filenames.
+Archive Studio is a Windows desktop app for organising academic document collections. It scans folders, keeps the original filename visible, looks up public metadata, and helps create cleaner author-title and bibliography entries.
 
 This is the Tauri version of the app.
 
@@ -12,12 +12,12 @@ This is the Tauri version of the app.
 - Search a compact embedded metadata index for relevant academic titles before falling back to online lookup.
 - Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, Open Library, and Internet Archive.
 - Use dedicated ISBN lookups through Google Books and Open Library when an ISBN is available.
-- Edit title, author, DOI, ISBN, bibliography, suggested filename, accuracy, and notes.
+- Edit title, author, DOI, ISBN, bibliography, accuracy, and notes. The scanned filename is shown but not edited by cleanup or metadata fetch.
 - Use right-click formatting for bold and italic text in editable fields.
-- Copy bibliography, filename, or full entry.
+- Copy bibliography, original filename, or full entry.
 - Export entries to CSV.
 - Save work locally so entries remain available when the app is reopened.
-- Sort by title, author, and accuracy.
+- Sort by author-title, filename, and accuracy.
 - Search entries.
 - Resize and collapse columns.
 - Wrap table text.
