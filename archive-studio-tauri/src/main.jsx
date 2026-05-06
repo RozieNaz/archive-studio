@@ -133,6 +133,11 @@ function displayLabel(column) {
 }
 
 function authorTitleDisplay(row) {
+  const author = titleCase(stripJunk(row.Author));
+  const title = cleanTitleText(row.Title);
+  if (author && title && !looksBrokenIdentity(`${author} ${title}`)) {
+    return makeSuggestedFilename({ author, title, year: yearFrom(row.Bibliography || row.Title || row["Suggested Filename"]) });
+  }
   const suggested = titleCase(stripJunk(row["Suggested Filename"]));
   if (suggested && !looksBrokenIdentity(suggested)) return suggested;
   const identity = authorTitleFromSource(cleanFilename(row.Filename));
@@ -369,7 +374,7 @@ function looksBrokenIdentity(value) {
 
 function cleanTitleText(value) {
   return titleCase(
-    stripJunk(value)
+    stripTrailingYear(stripJunk(value))
       .replace(/\s+-\s+/g, " ")
       .replace(/\bQur\s+Anic\b/gi, "Quranic")
       .replace(/\bQur\s+An\b/gi, "Quran")
@@ -377,6 +382,10 @@ function cleanTitleText(value) {
       .replace(/\s+/g, " ")
       .trim()
   );
+}
+
+function stripTrailingYear(value) {
+  return String(value || "").replace(/\s*\((15|16|17|18|19|20)\d{2}\)\s*$/g, "").trim();
 }
 
 function titleAuthorFromPdfText(value) {
@@ -425,8 +434,8 @@ function mergePdfClues(row, text) {
 
 function makeSuggestedFilename(item) {
   const author = stripJunk(item.author || "").split(",")[0].trim();
-  const title = shortTitle(item.title || "");
-  const year = item.year || "";
+  const title = shortTitle(stripTrailingYear(item.title || ""));
+  const year = item.year || yearFrom(item.title);
   if (author && title && year) return titleCase(`${author} - ${title} (${year})`);
   if (author && title) return titleCase(`${author} - ${title}`);
   if (title && year) return titleCase(`${title} (${year})`);
@@ -521,7 +530,7 @@ function extractFromBibliography(row) {
 }
 
 function shortTitle(value) {
-  return stripJunk(value)
+  return stripTrailingYear(stripJunk(value))
     .split(":")[0]
     .split(". ")[0]
     .split(", ")[0]
@@ -1345,14 +1354,23 @@ function App() {
     if (rows[selectedIndex]?.Locked) return;
     setRows((current) =>
       current.map((row, index) =>
-        index === selectedIndex
-          ? {
-              ...row,
-              [field]: value,
-            }
-          : row
+        index === selectedIndex ? updateRowField(row, field, value) : row
       )
     );
+  }
+
+  function updateRowField(row, field, value) {
+    const next = { ...row, [field]: value };
+    if (field === "Author" || field === "Title") {
+      const author = titleCase(stripJunk(next.Author));
+      const title = cleanTitleText(next.Title);
+      next["Suggested Filename"] = makeSuggestedFilename({
+        author,
+        title,
+        year: yearFrom(next.Bibliography || value || next["Suggested Filename"]),
+      });
+    }
+    return next;
   }
 
   function openFormatMenu(event, field) {
