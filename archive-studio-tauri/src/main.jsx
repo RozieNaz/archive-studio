@@ -1370,11 +1370,7 @@ function App() {
       const identity = authorTitleFromSource(value);
       next.Author = identity.author ? titleCase(stripJunk(identity.author)) : "";
       next.Title = cleanTitleText(identity.title || value);
-      next["Suggested Filename"] = makeSuggestedFilename({
-        author: next.Author,
-        title: next.Title,
-        year: yearFrom(next.Bibliography || value),
-      });
+      next["Suggested Filename"] = value;
       delete next["Author - Title"];
       return next;
     }
