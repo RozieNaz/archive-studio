@@ -7,7 +7,7 @@ import "./styles.css";
 const COLUMNS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const NOTE_FIELD = "Notes";
 const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
-const EDITOR_FIELDS = ["Author", "Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
+const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
 const SORTABLE_COLUMNS = new Set(["Author - Title", "Accuracy", "Filename"]);
 const ACCURACY_RANK = { Zero: 0, Low: 1, Medium: 2, High: 3 };
@@ -148,6 +148,11 @@ function authorTitleDisplay(row) {
 function cellValue(row, column) {
   if (column === "Author - Title") return authorTitleDisplay(row);
   return column === "Bibliography" ? normaliseBibliographyLabels(row[column]) : row[column] || "";
+}
+
+function editorFieldValue(row, column) {
+  if (column === "Author - Title") return row["Suggested Filename"] || authorTitleDisplay(row);
+  return cellValue(row, column);
 }
 
 function rowFileKey(row) {
@@ -1361,6 +1366,18 @@ function App() {
 
   function updateRowField(row, field, value) {
     const next = { ...row, [field]: value };
+    if (field === "Author - Title") {
+      const identity = authorTitleFromSource(value);
+      next.Author = identity.author ? titleCase(stripJunk(identity.author)) : "";
+      next.Title = cleanTitleText(identity.title || value);
+      next["Suggested Filename"] = makeSuggestedFilename({
+        author: next.Author,
+        title: next.Title,
+        year: yearFrom(next.Bibliography || value),
+      });
+      delete next["Author - Title"];
+      return next;
+    }
     if (field === "Author" || field === "Title") {
       const author = titleCase(stripJunk(next.Author));
       const title = cleanTitleText(next.Title);
@@ -1720,7 +1737,7 @@ function App() {
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
-                  <textarea value={selected[column] || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                  <textarea value={editorFieldValue(selected, column)} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                 </label>
               ) : (
                 <label key={column}>
@@ -1742,7 +1759,7 @@ function App() {
                       )}
                     </div>
                   ) : (
-                    <input value={selected[column] || ""} disabled={selected.Locked || column === "Filename"} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={editorFieldValue(selected, column)} disabled={selected.Locked || column === "Filename"} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )
