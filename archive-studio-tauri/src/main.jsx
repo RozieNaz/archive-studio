@@ -12,7 +12,7 @@ const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accurac
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
 const SORTABLE_COLUMNS = new Set(["Author - Title", "Accuracy", "Filename"]);
 const ACCURACY_RANK = { Zero: 0, Low: 1, Medium: 2, High: 3 };
-const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt"]);
+const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt", "csv"]);
 const DEFAULT_WIDTHS = [300, 130, 130, 320, 105, 260];
 const MIN_WIDTHS = [120, 60, 60, 120, 85, 100];
 const COLLAPSED_WIDTH = 34;
@@ -81,6 +81,111 @@ function makeRow(file) {
   };
 }
 
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const input = String(text || "");
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows.filter((item) => item.some((value) => stripJunk(value)));
+}
+
+function normaliseCsvHeader(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function csvColumnMap(headers) {
+  const aliases = {
+    author: ["author", "authors", "creator", "creators", "contributor", "contributors"],
+    title: ["title", "booktitle", "worktitle", "publicationtitle", "itemtitle"],
+    doi: ["doi", "digitalobjectidentifier"],
+    isbn: ["isbn", "isbn10", "isbn13", "eisbn", "printisbn", "electronicisbn"],
+    publisher: ["publisher", "imprint"],
+    pubdate: ["pubdate", "publicationdate", "publisheddate", "published", "date", "year"],
+  };
+  const normalisedHeaders = headers.map(normaliseCsvHeader);
+  return Object.fromEntries(Object.entries(aliases).map(([field, names]) => [
+    field,
+    normalisedHeaders.findIndex((header) => names.includes(header)),
+  ]));
+}
+
+function csvField(cells, map, field) {
+  const index = map[field];
+  return index >= 0 ? stripJunk(cells[index]) : "";
+}
+
+function rowFromCsvRecord(file, cells, map, index) {
+  const author = titleCase(csvField(cells, map, "author"));
+  const title = cleanTitleText(csvField(cells, map, "title"));
+  const doi = cleanDoi(csvField(cells, map, "doi"));
+  const isbn = stripJunk(csvField(cells, map, "isbn"));
+  const publisher = titleCase(csvField(cells, map, "publisher"));
+  const pubdate = csvField(cells, map, "pubdate");
+  const year = yearFrom(pubdate);
+  const bibliography = normaliseBibliographyLabels(makeBibliography({ author, title, publisher, year, doi, isbn }));
+  const suggested = makeSuggestedFilename({ author, title, year });
+  const accuracy = author && title && (doi || isbn) ? "Medium" : author && title ? "Low" : "Zero";
+  return {
+    Filename: file.name,
+    FilePath: `${file.path || file.name}#csv-${index + 1}`,
+    Extension: "csv",
+    Title: title,
+    Author: author,
+    DOI: doi,
+    ISBN: isbn,
+    Publisher: publisher,
+    Pubdate: pubdate,
+    "Suggested Filename": suggested,
+    [MANUAL_AUTHOR_TITLE_FIELD]: "",
+    Bibliography: bibliography,
+    Accuracy: accuracy,
+    Notes: "",
+    Locked: false,
+    PdfTextChecked: true,
+  };
+}
+
+function rowsFromCsv(file, text) {
+  const parsed = parseCsv(text);
+  if (parsed.length < 2) return [];
+  const [headers, ...records] = parsed;
+  const map = csvColumnMap(headers);
+  return records
+    .map((cells, index) => rowFromCsvRecord(file, cells, map, index))
+    .filter((row) => row.Author || row.Title || row.DOI || row.ISBN);
+}
+
 function normaliseSavedRows(savedRows) {
   return savedRows.map((row) => {
     const normalised = {
@@ -106,9 +211,20 @@ function normaliseSavedRows(savedRows) {
 }
 
 function normaliseBibliographyLabels(value) {
-  return String(value || "")
+  const labelled = String(value || "")
     .replace(/\bDoi:/g, "DOI:")
     .replace(/\bIsbn:/g, "ISBN:");
+  return normaliseIdentifierFullStops(labelled);
+}
+
+function normaliseIdentifierFullStops(value) {
+  let text = String(value || "").replace(/\s+/g, " ").trim();
+  text = text.replace(/\bDOI:\s*(10\.[^\s.;]+(?:[./][^\s.;]+)*)(?=\s+ISBN:|$)/gi, (_match, doi) => `DOI: ${cleanDoi(doi)}.`);
+  text = text.replace(/\bISBN:\s*([0-9Xx,\-\s,]+?)(?=$)/gi, (_match, isbn) => {
+    const clean = stripJunk(isbn).replace(/[.;]+$/g, "").trim();
+    return clean ? `ISBN: ${clean}.` : "";
+  });
+  return text;
 }
 
 function downloadText(filename, text, type) {
@@ -566,7 +682,7 @@ function cleanEntry(row) {
     : shouldReplaceTitle(row.Title, extracted.Title, author)
     ? extracted.Title
     : row.Title && !looksBrokenIdentity(row.Title) ? cleanTitleText(row.Title) : extracted.Title || cleanTitleText(filenameIdentity.title || titleOnly);
-  const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title);
+  const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title || row.Pubdate);
   const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
   const suggested = hasBibliographyIdentity
     ? makeSuggestedFilename({ author, title, year })
@@ -680,7 +796,8 @@ function makeBibliography(item) {
     const volumeIssue = [stripJunk(item.volume), item.issue ? `no. ${stripJunk(item.issue)}` : ""].filter(Boolean).join(", ");
     const pages = item.pages ? `: ${stripJunk(item.pages).replace(/--/g, "–").replace(/-/g, "–")}` : "";
     const doiPart = doi ? ` DOI: ${doi}.` : "";
-    return `${bibliographyAuthor(author)}. "${title}." ${publication}${volumeIssue ? ` ${volumeIssue}` : ""}${year ? ` (${year})` : ""}${pages}.${doiPart}`.replace(/\s+/g, " ").trim();
+    const isbnPart = isbn ? ` ISBN: ${isbn}.` : "";
+    return normaliseBibliographyLabels(`${bibliographyAuthor(author)}. "${title}." ${publication}${volumeIssue ? ` ${volumeIssue}` : ""}${year ? ` (${year})` : ""}${pages}.${doiPart}${isbnPart}`.replace(/\s+/g, " ").trim());
   }
   const parts = [];
   if (author) parts.push(`${author}.`);
@@ -689,8 +806,8 @@ function makeBibliography(item) {
   if (publisher) parts.push(`${publisher}.`);
   if (year) parts.push(`${year}.`);
   if (doi) parts.push(`DOI: ${doi}.`);
-  else if (isbn) parts.push(`ISBN: ${isbn}.`);
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+  if (isbn) parts.push(`ISBN: ${isbn}.`);
+  return normaliseBibliographyLabels(parts.join(" ").replace(/\s+/g, " ").trim());
 }
 
 async function searchGoogleBooks(query) {
@@ -1217,11 +1334,26 @@ function App() {
     );
   }
 
-  function addScannedFiles(files) {
+  async function addScannedFiles(files) {
     const existing = new Set(rows.map(rowFileKey));
-    const scannedRows = Array.from(files)
-      .filter((file) => SUPPORTED_EXTENSIONS.has((file.extension || file.name.split(".").pop() || "").toLowerCase()))
-      .map(makeRow);
+    const scannedRows = [];
+    let csvRows = 0;
+    for (const file of Array.from(files)) {
+      const extension = (file.extension || file.name.split(".").pop() || "").toLowerCase();
+      if (!SUPPORTED_EXTENSIONS.has(extension)) continue;
+      if (extension === "csv" && file.path) {
+        try {
+          const text = await invoke("read_text_file", { path: file.path });
+          const imported = rowsFromCsv(file, text);
+          csvRows += imported.length;
+          scannedRows.push(...imported);
+        } catch {
+          scannedRows.push(makeRow(file));
+        }
+      } else {
+        scannedRows.push(makeRow(file));
+      }
+    }
     const next = [...rows];
     let added = 0;
     let updated = 0;
@@ -1247,7 +1379,7 @@ function App() {
       });
 
     setRows(next);
-    setStatus(`Scan complete. Added ${added} new files, updated ${updated} existing file paths. Total: ${next.length}.`);
+    setStatus(`Scan complete. Added ${added} entries${csvRows ? `, including ${csvRows} from CSV` : ""}, updated ${updated} existing file paths. Total: ${next.length}.`);
   }
 
   async function chooseFolderAndScan() {
@@ -1259,7 +1391,7 @@ function App() {
         setStatus("No folder selected, or no supported files found.");
         return;
       }
-      addScannedFiles(files);
+      await addScannedFiles(files);
     } catch (error) {
       setStatus(`Folder scan failed: ${error}`);
     }

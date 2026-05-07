@@ -37,8 +37,13 @@ fn save_csv(filename: String, contents: String) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|error| error.to_string())
+}
+
 fn collect_supported_files(folder: &Path, entries: &mut Vec<FileEntry>) -> Result<(), String> {
-    let supported = ["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt"];
+    let supported = ["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt", "csv"];
     for item in fs::read_dir(folder).map_err(|error| error.to_string())? {
         let item = item.map_err(|error| error.to_string())?;
         let path = item.path();
@@ -80,7 +85,7 @@ fn scan_folder() -> Result<Vec<FileEntry>, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![extract_pdf_text, save_csv, scan_folder])
+        .invoke_handler(tauri::generate_handler![extract_pdf_text, read_text_file, save_csv, scan_folder])
         .run(tauri::generate_context!())
         .expect("error while running Archive Studio");
 }
