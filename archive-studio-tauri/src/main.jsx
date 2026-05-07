@@ -149,7 +149,7 @@ function rowFromCsvRecord(file, cells, map, index) {
   const author = titleCase(csvField(cells, map, "author"));
   const title = cleanTitleText(csvField(cells, map, "title"));
   const doi = cleanDoi(csvField(cells, map, "doi"));
-  const isbn = stripJunk(csvField(cells, map, "isbn"));
+  const isbn = normaliseIsbnList(csvField(cells, map, "isbn"));
   const publisher = titleCase(csvField(cells, map, "publisher"));
   const pubdate = csvField(cells, map, "pubdate");
   const year = yearFrom(pubdate);
@@ -220,8 +220,8 @@ function normaliseBibliographyLabels(value) {
 function normaliseIdentifierFullStops(value) {
   let text = String(value || "").replace(/\s+/g, " ").trim();
   text = text.replace(/\bDOI:\s*(10\.[^\s.;]+(?:[./][^\s.;]+)*)(?=\s+ISBN:|$)/gi, (_match, doi) => `DOI: ${cleanDoi(doi)}.`);
-  text = text.replace(/\bISBN:\s*([0-9Xx,\-\s,]+?)(?=$)/gi, (_match, isbn) => {
-    const clean = stripJunk(isbn).replace(/[.;]+$/g, "").trim();
+  text = text.replace(/\bISBN:\s*([0-9Xx,\-\s,;]+?)(?=$)/gi, (_match, isbn) => {
+    const clean = normaliseIsbnList(isbn).replace(/[.;]+$/g, "").trim();
     return clean ? `ISBN: ${clean}.` : "";
   });
   return text;
@@ -420,6 +420,17 @@ function isbnFromText(value) {
   return matches
     .map((match) => match.replace(/[-\s]/g, ""))
     .find((match) => match.length === 10 || match.length === 13) || "";
+}
+
+function normaliseIsbnList(value) {
+  const text = String(value || "").trim();
+  const wantsStop = /[.]$/.test(text);
+  const matches = text.match(/\b(?:97[89][-\s]?)?(?:\d[-\s]?){9,12}[\dX]\b/gi) || [];
+  const clean = [...new Set(matches
+    .map((match) => match.replace(/[-\s]/g, "").toUpperCase())
+    .filter((match) => match.length === 10 || match.length === 13))];
+  if (!clean.length) return stripJunk(text).replace(/[.;]+$/g, "").trim();
+  return `${clean.join("; ")}${wantsStop ? "." : ""}`;
 }
 
 function cleanDoi(value) {
@@ -701,7 +712,7 @@ function cleanEntry(row) {
     Title: title,
     Author: author,
     DOI: cleanDoi(row.DOI || extracted.DOI),
-    ISBN: stripJunk(row.ISBN || extracted.ISBN),
+    ISBN: normaliseIsbnList(row.ISBN || extracted.ISBN),
     [MANUAL_AUTHOR_TITLE_FIELD]: row[MANUAL_AUTHOR_TITLE_FIELD] || "",
     "Suggested Filename": suggested,
     Bibliography: normaliseBibliographyLabels(stripJunk(row.Bibliography)),
@@ -791,7 +802,7 @@ function makeBibliography(item) {
   const publisher = stripJunk(item.publisher);
   const year = item.year || "";
   const doi = cleanDoi(item.doi);
-  const isbn = stripJunk(item.isbn);
+  const isbn = normaliseIsbnList(item.isbn);
   if (author && title && publication && (item.volume || item.issue || item.pages)) {
     const volumeIssue = [stripJunk(item.volume), item.issue ? `no. ${stripJunk(item.issue)}` : ""].filter(Boolean).join(", ");
     const pages = item.pages ? `: ${stripJunk(item.pages).replace(/--/g, "–").replace(/-/g, "–")}` : "";
@@ -1072,7 +1083,7 @@ async function searchZoteroTranslationServer(identifier) {
 function splitIdentifiers(value) {
   return String(value || "")
     .split(/[,\n;|]/)
-    .map((part) => part.replace(/[-\s]/g, "").trim().toLowerCase())
+    .map((part) => part.replace(/[-\s.]/g, "").trim().toLowerCase())
     .filter(Boolean);
 }
 
@@ -1172,7 +1183,7 @@ function metadataRowFromBest(row, best) {
     Title: titleCase(output.title),
     Author: titleCase(best.author),
     DOI: best.doi,
-    ISBN: best.isbn,
+    ISBN: normaliseIsbnList(best.isbn),
     "Suggested Filename": makeSuggestedFilename(output),
     Bibliography: bibliography,
     Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
