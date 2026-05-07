@@ -6,6 +6,7 @@ import "./styles.css";
 
 const COLUMNS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const NOTE_FIELD = "Notes";
+const MANUAL_AUTHOR_TITLE_FIELD = "Manual Author - Title";
 const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
 const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
@@ -72,6 +73,7 @@ function makeRow(file) {
     DOI: "",
     ISBN: "",
     "Suggested Filename": cleanedFilename,
+    [MANUAL_AUTHOR_TITLE_FIELD]: "",
     Bibliography: "",
     Accuracy: "",
     Notes: "",
@@ -87,6 +89,7 @@ function normaliseSavedRows(savedRows) {
       Extension: row.Extension || "",
       Filename: row.Filename || row["Suggested Filename"] || "",
       "Suggested Filename": row["Suggested Filename"] || cleanFilename(row.Filename || ""),
+      [MANUAL_AUTHOR_TITLE_FIELD]: row[MANUAL_AUTHOR_TITLE_FIELD] || "",
       Accuracy: row.Accuracy || row.Confidence || "",
       Bibliography: normaliseBibliographyLabels(row.Bibliography),
       Notes: row.Notes || "",
@@ -133,6 +136,8 @@ function displayLabel(column) {
 }
 
 function authorTitleDisplay(row) {
+  const manual = stripJunk(row[MANUAL_AUTHOR_TITLE_FIELD]);
+  if (manual) return manual;
   const author = titleCase(stripJunk(row.Author));
   const title = cleanTitleText(row.Title);
   if (author && title && !looksBrokenIdentity(`${author} ${title}`)) {
@@ -151,7 +156,7 @@ function cellValue(row, column) {
 }
 
 function editorFieldValue(row, column) {
-  if (column === "Author - Title") return row["Suggested Filename"] || authorTitleDisplay(row);
+  if (column === "Author - Title") return row[MANUAL_AUTHOR_TITLE_FIELD] || row["Suggested Filename"] || authorTitleDisplay(row);
   return cellValue(row, column);
 }
 
@@ -581,6 +586,7 @@ function cleanEntry(row) {
     Author: author,
     DOI: cleanDoi(row.DOI || extracted.DOI),
     ISBN: stripJunk(row.ISBN || extracted.ISBN),
+    [MANUAL_AUTHOR_TITLE_FIELD]: row[MANUAL_AUTHOR_TITLE_FIELD] || "",
     "Suggested Filename": suggested,
     Bibliography: normaliseBibliographyLabels(stripJunk(row.Bibliography)),
     Notes: stripJunk(row.Notes),
@@ -652,6 +658,7 @@ function mergeCheckedRow(original, cleaned, checked) {
     Author: keep("Author"),
     DOI: keep("DOI"),
     ISBN: keep("ISBN"),
+    [MANUAL_AUTHOR_TITLE_FIELD]: original[MANUAL_AUTHOR_TITLE_FIELD] || cleaned[MANUAL_AUTHOR_TITLE_FIELD] || "",
     "Suggested Filename": keep("Suggested Filename"),
     Bibliography: cleaned.Bibliography || checked.Bibliography || "",
     Notes: cleaned.Notes || checked.Notes || "",
@@ -1370,7 +1377,7 @@ function App() {
       const identity = authorTitleFromSource(value);
       next.Author = identity.author ? titleCase(stripJunk(identity.author)) : "";
       next.Title = cleanTitleText(identity.title || value);
-      next["Suggested Filename"] = value;
+      next[MANUAL_AUTHOR_TITLE_FIELD] = value;
       delete next["Author - Title"];
       return next;
     }
