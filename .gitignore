@@ -18,3 +18,4 @@ archive-studio-tauri/src-tauri/target/
 Thumbs.db
 .vscode/
 .idea/
+archive-studio-tauri/src-tauri/gen/schemas

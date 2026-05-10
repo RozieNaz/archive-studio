@@ -5,8 +5,8 @@ from collections import Counter
 from pathlib import Path
 
 
-SOURCE_DIR = Path(r"C:\Users\gakay\Downloads\Academic Title Lists\Distribution Safe CSV")
 PROJECT_DIR = Path(__file__).resolve().parents[1]
+SOURCE_DIR = PROJECT_DIR / "data" / "csv"
 OUTPUT_DIR = PROJECT_DIR / "src" / "data"
 INDEX_PATH = OUTPUT_DIR / "metadata-index.json"
 REPORT_PATH = OUTPUT_DIR / "metadata-index-report.json"
@@ -55,6 +55,9 @@ def is_topic_match(*values):
 
 def read_csv(name):
     path = SOURCE_DIR / name
+    if not path.exists():
+        print(f"Warning: {path} not found. Skipping.")
+        return
     with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
         yield from csv.DictReader(handle)
 

@@ -227,16 +227,6 @@ function normaliseIdentifierFullStops(value) {
   return text;
 }
 
-function downloadText(filename, text, type) {
-  const blob = new Blob([text], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
 function toCsv(rows) {
   const escape = (value) => `"${String(value || "").replaceAll('"', '""')}"`;
   const headers = EXPORT_COLUMNS.map(displayLabel);
@@ -720,10 +710,6 @@ function cleanEntry(row) {
   };
 }
 
-function usefulFieldCount(row) {
-  return ["Title", "Author", "DOI", "ISBN", "Bibliography"].filter((field) => stripJunk(row[field])).length;
-}
-
 function assessLocalAccuracy(row) {
   const cleaned = cleanEntry(row);
   const hasIdentity = hasUsableIdentity(cleaned);
@@ -735,27 +721,12 @@ function assessLocalAccuracy(row) {
   return "Zero";
 }
 
-function hasMeaningfulMetadata(row) {
-  const cleaned = cleanEntry(row);
-  const hasFetchedDetail = Boolean(cleaned.DOI || cleaned.ISBN || stripJunk(cleaned.Bibliography));
-  return cleaned.Accuracy !== "Zero" && hasFetchedDetail && usefulFieldCount(cleaned) >= 2 && hasUsableIdentity(cleaned);
-}
-
 function accuracyValue(row) {
   return row.Accuracy || "Not Set";
 }
 
 function waitForUi() {
   return new Promise((resolve) => setTimeout(resolve, 35));
-}
-
-function entryWarnings(row) {
-  const warnings = [];
-  if (!row.Author) warnings.push("missing author");
-  if (!row.Title) warnings.push("missing title");
-  if (!yearFrom(row.Bibliography || row["Suggested Filename"])) warnings.push("missing year");
-  if (!row.DOI && !row.ISBN) warnings.push("missing DOI/ISBN");
-  return warnings;
 }
 
 function hasUsableIdentity(row) {
@@ -769,11 +740,6 @@ function bibliographyAuthor(value) {
   const parts = first.split(/\s+/).filter(Boolean);
   if (parts.length < 2) return first;
   return `${parts.at(-1)}, ${parts.slice(0, -1).join(" ")}`;
-}
-
-function isStrongBibliography(value) {
-  const text = stripJunk(value);
-  return Boolean(text && yearFrom(text) && /\bDOI:\s*10\./i.test(text) && (/["“”]/.test(text) || /\b\d+\s*,?\s*no\.?\s*\d+/i.test(text) || /:\s*\d+[-–]\d+/.test(text)));
 }
 
 function mergeCheckedRow(original, cleaned, checked) {
@@ -1681,16 +1647,6 @@ function App() {
     setSelectedIndexes([]);
     setOpenMenu("");
     setStatus(nextFilter === "All" ? "Showing all entries." : `Showing ${nextFilter.toLowerCase()} entries.`);
-  }
-
-  function cleanSelectedEntry() {
-    if (selectedIndexes.length !== 1) return;
-    const selectedIndex = selectedIndexes[0];
-    if (rows[selectedIndex]?.Locked) return;
-    setRows((current) =>
-      current.map((row, index) => (index === selectedIndex ? cleanEntry(row) : row))
-    );
-    setStatus("Selected entry cleaned up.");
   }
 
   function cleanUnlockedEntries() {
