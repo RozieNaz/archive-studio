@@ -185,6 +185,15 @@ p {
   background: var(--surface);
 }
 
+.crossref-contact {
+  width: 142px;
+  min-height: var(--toolbar-control-width);
+  padding: 0 9px;
+  border-color: var(--line);
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
 .actions .clear-search {
   position: absolute;
   right: 5px;

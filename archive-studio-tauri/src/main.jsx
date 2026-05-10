@@ -18,6 +18,7 @@ const MIN_WIDTHS = [120, 60, 60, 120, 85, 100];
 const COLLAPSED_WIDTH = 34;
 const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
 const STORAGE_KEY = "archive-studio-project";
+const CROSSREF_CONTACT_KEY = "archive-studio-crossref-contact";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
 const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
 
@@ -348,6 +349,39 @@ function loadLocalRows() {
   } catch {
     return [];
   }
+}
+
+function loadCrossrefContactEmail() {
+  try {
+    return localStorage.getItem(CROSSREF_CONTACT_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function crossrefContactEmail() {
+  try {
+    const value = localStorage.getItem(CROSSREF_CONTACT_KEY) || "";
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()) ? value.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function addCrossrefPoliteContact(params) {
+  const email = crossrefContactEmail();
+  if (email) params.set("mailto", email);
+  return params;
+}
+
+function crossrefWorksUrl(params) {
+  return `https://api.crossref.org/works?${addCrossrefPoliteContact(params).toString()}`;
+}
+
+function crossrefDoiUrl(doiValue) {
+  const params = addCrossrefPoliteContact(new URLSearchParams());
+  const query = params.toString();
+  return `https://api.crossref.org/works/${encodeURIComponent(doiValue)}${query ? `?${query}` : ""}`;
 }
 
 async function fetchJson(url) {
@@ -946,7 +980,11 @@ async function searchOpenAlex(author, title) {
 }
 
 async function searchCrossref(query) {
-  const data = await fetchJson(`https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(query)}&rows=5`);
+  const params = new URLSearchParams({
+    "query.bibliographic": query,
+    rows: "5",
+  });
+  const data = await fetchJson(crossrefWorksUrl(params));
   return (data?.message?.items || []).map((item) => ({
     source: "Crossref",
     title: stripJunk((item.title || [""])[0] || ""),
@@ -969,7 +1007,7 @@ async function searchCrossrefByAuthorTitle(author, title) {
     "query.title": title,
     rows: "5",
   });
-  const data = await fetchJson(`https://api.crossref.org/works?${params.toString()}`);
+  const data = await fetchJson(crossrefWorksUrl(params));
   return (data?.message?.items || []).map((item) => ({
     source: "Crossref Author Title",
     title: stripJunk((item.title || [""])[0] || ""),
@@ -988,7 +1026,7 @@ async function searchCrossrefByAuthorTitle(author, title) {
 async function searchCrossrefByDoi(doi) {
   const doiValue = cleanDoi(doi);
   if (!doiValue.startsWith("10.")) return [];
-  const data = await fetchJson(`https://api.crossref.org/works/${encodeURIComponent(doiValue)}`);
+  const data = await fetchJson(crossrefDoiUrl(doiValue));
   const item = data?.message;
   if (!item) return [];
   return [{
@@ -1232,6 +1270,7 @@ function App() {
   const [sortConfig, setSortConfig] = useState({ column: "", direction: "asc" });
   const [formatMenu, setFormatMenu] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [crossrefContact, setCrossrefContact] = useState(loadCrossrefContactEmail);
   const [accuracyFilter, setAccuracyFilter] = useState("All");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
   const [openMenu, setOpenMenu] = useState("");
@@ -1272,6 +1311,10 @@ function App() {
     rowsRef.current = rows;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
   }, [rows]);
+
+  useEffect(() => {
+    localStorage.setItem(CROSSREF_CONTACT_KEY, crossrefContact.trim());
+  }, [crossrefContact]);
 
   useEffect(() => {
     const closeMenu = () => {
@@ -1768,6 +1811,14 @@ function App() {
               }}>x</button>
             )}
           </div>
+          <input
+            className="crossref-contact"
+            type="email"
+            title="Optional Crossref contact email for polite-pool requests"
+            placeholder="Crossref email"
+            value={crossrefContact}
+            onChange={(event) => setCrossrefContact(event.target.value)}
+          />
           <button title="Open Folder" onClick={chooseFolderAndScan}><Icon name="folder" /></button>
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
