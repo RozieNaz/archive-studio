@@ -271,6 +271,17 @@ function rowFileKey(row) {
   return row.FilePath || row.Filename || row["Suggested Filename"] || "";
 }
 
+function rowDuplicateKey(row) {
+  const filePath = String(row.FilePath || "").toLowerCase();
+  if (filePath && !filePath.includes("#csv-")) return `path:${filePath}`;
+  const doi = cleanDoi(row.DOI);
+  if (doi) return `doi:${doi}`;
+  const isbn = splitIdentifiers(row.ISBN).sort().join("|");
+  if (isbn) return `isbn:${isbn}`;
+  const identity = normalise(authorTitleDisplay(row) || row.Filename);
+  return identity ? `identity:${identity}` : rowFileKey(row).toLowerCase();
+}
+
 function columnHint(column) {
   const label = displayLabel(column);
   return label.includes(" ")
@@ -430,7 +441,7 @@ function yearFrom(value) {
 function firstIdentifier(value) {
   return String(value || "")
     .split(/[,\n;]/)
-    .map((part) => part.trim())
+    .map((part) => part.trim().replace(/[.]+$/g, ""))
     .find(Boolean) || "";
 }
 
@@ -448,13 +459,28 @@ function isbnFromText(value) {
 
 function normaliseIsbnList(value) {
   const text = String(value || "").trim();
-  const wantsStop = /[.]$/.test(text);
   const matches = text.match(/\b(?:97[89][-\s]?)?(?:\d[-\s]?){9,12}[\dX]\b/gi) || [];
   const clean = [...new Set(matches
     .map((match) => match.replace(/[-\s]/g, "").toUpperCase())
     .filter((match) => match.length === 10 || match.length === 13))];
   if (!clean.length) return stripJunk(text).replace(/[.;]+$/g, "").trim();
-  return `${clean.join("; ")}${wantsStop ? "." : ""}`;
+  return clean.join("; ");
+}
+
+function ensureFinalFullStop(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function normaliseIsbnField(value) {
+  const isbn = normaliseIsbnList(value).replace(/[.;]+$/g, "").trim();
+  return isbn ? `${isbn}.` : "";
+}
+
+function normaliseDoiField(value) {
+  const doi = cleanDoi(value);
+  return doi ? `${doi}.` : "";
 }
 
 function cleanDoi(value) {
@@ -512,6 +538,16 @@ function authorTitleFromRow(row) {
     return { author: directAuthor, title: directTitle };
   }
   return authorTitleFromSource(row["Suggested Filename"] || cleanFilename(row.Filename));
+}
+
+function manualAuthorTitle(row) {
+  return stripJunk(row[MANUAL_AUTHOR_TITLE_FIELD]);
+}
+
+function manualAuthorTitleIdentity(row) {
+  const manual = manualAuthorTitle(row);
+  if (!manual) return { author: "", title: "" };
+  return authorTitleFromSource(manual);
 }
 
 function looksLikePersonName(value) {
@@ -701,17 +737,23 @@ function shortTitle(value) {
 }
 
 function cleanEntry(row) {
+  const manual = manualAuthorTitle(row);
+  const manualIdentity = manualAuthorTitleIdentity(row);
   const extracted = extractFromBibliography(row);
   const filenameIdentity = authorTitleFromRow(row);
   const rawFilenameIdentity = authorTitleFromSource(cleanFilename(row.Filename));
   const hasBibliographyIdentity = Boolean(extracted.Author && extracted.Title);
   const shouldPreferFilename = !hasBibliographyIdentity && rawFilenameIdentity.author && rawFilenameIdentity.title && looksBrokenIdentity(`${row.Author || ""} ${row.Title || ""} ${row["Suggested Filename"] || ""}`);
   const titleOnly = !rawFilenameIdentity.author && rawFilenameIdentity.title ? rawFilenameIdentity.title : "";
-  const author = hasBibliographyIdentity
+  const author = manualIdentity.author
+    ? titleCase(manualIdentity.author)
+    : hasBibliographyIdentity
     ? extracted.Author
     : shouldPreferFilename ? titleCase(rawFilenameIdentity.author)
     : row.Author ? titleCase(stripJunk(row.Author)) : extracted.Author || titleCase(filenameIdentity.author);
-  const title = hasBibliographyIdentity
+  const title = manualIdentity.title
+    ? cleanTitleText(manualIdentity.title)
+    : hasBibliographyIdentity
     ? extracted.Title
     : shouldPreferFilename ? titleCase(rawFilenameIdentity.title)
     : shouldReplaceTitle(row.Title, extracted.Title, author)
@@ -719,7 +761,9 @@ function cleanEntry(row) {
     : row.Title && !looksBrokenIdentity(row.Title) ? cleanTitleText(row.Title) : extracted.Title || cleanTitleText(filenameIdentity.title || titleOnly);
   const year = yearFrom(row.Bibliography || row["Suggested Filename"] || row.Title || row.Pubdate);
   const currentSuggested = titleCase(stripJunk(row["Suggested Filename"]));
-  const suggested = hasBibliographyIdentity
+  const suggested = manual
+    ? manual
+    : hasBibliographyIdentity
     ? makeSuggestedFilename({ author, title, year })
     : shouldPreferFilename
     ? makeSuggestedFilename({ author, title, year })
@@ -735,12 +779,12 @@ function cleanEntry(row) {
     Filename: row.Filename,
     Title: title,
     Author: author,
-    DOI: cleanDoi(row.DOI || extracted.DOI),
-    ISBN: normaliseIsbnList(row.ISBN || extracted.ISBN),
+    DOI: normaliseDoiField(row.DOI || extracted.DOI),
+    ISBN: normaliseIsbnField(row.ISBN || extracted.ISBN),
     [MANUAL_AUTHOR_TITLE_FIELD]: row[MANUAL_AUTHOR_TITLE_FIELD] || "",
     "Suggested Filename": suggested,
-    Bibliography: normaliseBibliographyLabels(stripJunk(row.Bibliography)),
-    Notes: stripJunk(row.Notes),
+    Bibliography: ensureFinalFullStop(normaliseBibliographyLabels(stripJunk(row.Bibliography))),
+    Notes: ensureFinalFullStop(stripJunk(row.Notes)),
   };
 }
 
@@ -783,12 +827,12 @@ function mergeCheckedRow(original, cleaned, checked) {
     ...cleaned,
     Title: keep("Title"),
     Author: keep("Author"),
-    DOI: keep("DOI"),
-    ISBN: keep("ISBN"),
+    DOI: normaliseDoiField(keep("DOI")),
+    ISBN: normaliseIsbnField(keep("ISBN")),
     [MANUAL_AUTHOR_TITLE_FIELD]: original[MANUAL_AUTHOR_TITLE_FIELD] || cleaned[MANUAL_AUTHOR_TITLE_FIELD] || "",
     "Suggested Filename": keep("Suggested Filename"),
-    Bibliography: cleaned.Bibliography || checked.Bibliography || "",
-    Notes: cleaned.Notes || checked.Notes || "",
+    Bibliography: ensureFinalFullStop(cleaned.Bibliography || checked.Bibliography || ""),
+    Notes: ensureFinalFullStop(cleaned.Notes || checked.Notes || ""),
     Filename: original.Filename,
     Accuracy: checked.Accuracy || assessLocalAccuracy(cleaned),
     Locked: original.Locked,
@@ -1171,6 +1215,8 @@ function chooseBest(filename, query, candidates, expected = {}) {
 }
 
 function metadataRowFromBest(row, best) {
+  const manual = manualAuthorTitle(row);
+  const manualIdentity = manualAuthorTitleIdentity(row);
   const sourceName = row["Suggested Filename"] || cleanFilename(row.Filename);
   const fileVolume = extractVolume(sourceName);
   const bestVolume = extractVolume(best.title);
@@ -1184,12 +1230,12 @@ function metadataRowFromBest(row, best) {
   const bibliography = best.bibliography || makeBibliography(output);
   const nextRow = {
     ...row,
-    Title: titleCase(output.title),
-    Author: titleCase(best.author),
-    DOI: best.doi,
-    ISBN: normaliseIsbnList(best.isbn),
-    "Suggested Filename": makeSuggestedFilename(output),
-    Bibliography: bibliography,
+    Title: manualIdentity.title ? cleanTitleText(manualIdentity.title) : titleCase(output.title),
+    Author: manualIdentity.author ? titleCase(manualIdentity.author) : titleCase(best.author),
+    DOI: normaliseDoiField(best.doi),
+    ISBN: normaliseIsbnField(best.isbn),
+    "Suggested Filename": manual || makeSuggestedFilename(output),
+    Bibliography: ensureFinalFullStop(bibliography),
     Accuracy: best.accuracy === "Zero" ? "Low" : best.accuracy,
   };
   if (!hasUsableIdentity(nextRow)) return { ...nextRow, Accuracy: assessLocalAccuracy(nextRow) };
@@ -1355,7 +1401,7 @@ function App() {
   }
 
   async function addScannedFiles(files) {
-    const existing = new Set(rows.map(rowFileKey));
+    const existing = new Set(rows.map(rowDuplicateKey));
     const scannedRows = [];
     let csvRows = 0;
     for (const file of Array.from(files)) {
@@ -1379,14 +1425,14 @@ function App() {
     let updated = 0;
 
     scannedRows.forEach((row) => {
-        const key = rowFileKey(row);
+        const key = rowDuplicateKey(row);
         if (!existing.has(key)) {
           next.push(row);
           existing.add(key);
           added += 1;
           return;
         }
-        const existingIndex = next.findIndex((item) => rowFileKey(item) === key);
+        const existingIndex = next.findIndex((item) => rowDuplicateKey(item) === key);
         if (existingIndex >= 0 && row.FilePath && !next[existingIndex].FilePath) {
           next[existingIndex] = {
             ...next[existingIndex],
@@ -1527,9 +1573,12 @@ function App() {
     const next = { ...row, [field]: value };
     if (field === "Author - Title") {
       const identity = authorTitleFromSource(value);
-      next.Author = identity.author ? titleCase(stripJunk(identity.author)) : "";
-      next.Title = cleanTitleText(identity.title || value);
       next[MANUAL_AUTHOR_TITLE_FIELD] = value;
+      next["Suggested Filename"] = value;
+      if (identity.author && identity.title) {
+        next.Author = titleCase(stripJunk(identity.author));
+        next.Title = cleanTitleText(identity.title);
+      }
       delete next["Author - Title"];
       return next;
     }
@@ -1670,6 +1719,12 @@ function App() {
   }
 
   function closeSelectedEntry() {
+    if (selectedIndexes.length === 1 && !rows[selectedIndexes[0]]?.Locked) {
+      const selectedIndex = selectedIndexes[0];
+      setRows((current) =>
+        current.map((row, index) => (index === selectedIndex ? cleanEntry(row) : row))
+      );
+    }
     setSelectedIndexes([]);
     setStatus("Entry saved.");
   }
