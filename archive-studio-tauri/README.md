@@ -7,6 +7,7 @@ This is the Tauri version of the app.
 ## Features
 
 - Scan whole folders of academic files.
+- Import bibliography rows from CSV, TSV, or TAB files included in the scanned folder; no separate import button is required.
 - Clean filenames by removing archive junk, symbols, extensions, and messy spacing.
 - Extract text from the first five PDF pages locally, then use DOI, ISBN, title, and author clues for metadata lookup.
 - Search a compact embedded metadata index for relevant academic titles before falling back to online lookup.

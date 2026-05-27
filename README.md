@@ -21,6 +21,7 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 ## Features
 
 - Scan a local folder of PDF, EPUB, MOBI, AZW3, DJVU, DOC/DOCX, RTF, and TXT files.
+- Import bibliography rows from CSV, TSV, or TAB files found through the same folder scan, including author, title, date, DOI, ISBN, publisher, bibliography/citation, and notes fields.
 - Keep the real scanned filename visible while cleaning the separate author-title metadata.
 - Extract text from the first five PDF pages locally, then use DOI, ISBN, title, and author clues before filename fallback.
 - Search an embedded topic-focused metadata index before falling back to public online sources.

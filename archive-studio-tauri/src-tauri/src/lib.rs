@@ -43,7 +43,7 @@ fn read_text_file(path: String) -> Result<String, String> {
 }
 
 fn collect_supported_files(folder: &Path, entries: &mut Vec<FileEntry>) -> Result<(), String> {
-    let supported = ["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt", "csv"];
+    let supported = ["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt", "csv", "tsv", "tab"];
     for item in fs::read_dir(folder).map_err(|error| error.to_string())? {
         let item = item.map_err(|error| error.to_string())?;
         let path = item.path();

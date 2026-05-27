@@ -12,7 +12,8 @@ const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accurac
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
 const SORTABLE_COLUMNS = new Set(["Author - Title", "Accuracy", "Filename"]);
 const ACCURACY_RANK = { Zero: 0, Low: 1, Medium: 2, High: 3 };
-const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt", "csv"]);
+const SUPPORTED_EXTENSIONS = new Set(["pdf", "epub", "mobi", "azw3", "djvu", "doc", "docx", "rtf", "txt", "csv", "tsv", "tab"]);
+const TABULAR_EXTENSIONS = new Set(["csv", "tsv", "tab"]);
 const DEFAULT_WIDTHS = [300, 130, 130, 320, 105, 260];
 const MIN_WIDTHS = [120, 60, 60, 120, 85, 100];
 const COLLAPSED_WIDTH = 34;
@@ -84,7 +85,7 @@ function makeRow(file) {
   };
 }
 
-function parseCsv(text) {
+function parseDelimitedText(text, delimiter = ",") {
   const rows = [];
   let row = [];
   let cell = "";
@@ -106,7 +107,7 @@ function parseCsv(text) {
     }
     if (char === '"') {
       quoted = true;
-    } else if (char === ",") {
+    } else if (char === delimiter) {
       row.push(cell);
       cell = "";
     } else if (char === "\n") {
@@ -131,10 +132,13 @@ function csvColumnMap(headers) {
   const aliases = {
     author: ["author", "authors", "creator", "creators", "contributor", "contributors"],
     title: ["title", "booktitle", "worktitle", "publicationtitle", "itemtitle"],
+    authorTitle: ["authortitle", "suggestedfilename"],
     doi: ["doi", "digitalobjectidentifier"],
     isbn: ["isbn", "isbn10", "isbn13", "eisbn", "printisbn", "electronicisbn"],
     publisher: ["publisher", "imprint"],
-    pubdate: ["pubdate", "publicationdate", "publisheddate", "published", "date", "year"],
+    pubdate: ["pubdate", "publicationdate", "publicationyear", "publisheddate", "published", "date", "year"],
+    bibliography: ["bibliography", "citation", "formattedcitation", "formattedreference", "fullcitation", "reference", "bib"],
+    notes: ["notes", "note"],
   };
   const normalisedHeaders = headers.map(normaliseCsvHeader);
   return Object.fromEntries(Object.entries(aliases).map(([field, names]) => [
@@ -148,21 +152,24 @@ function csvField(cells, map, field) {
   return index >= 0 ? stripJunk(cells[index]) : "";
 }
 
-function rowFromCsvRecord(file, cells, map, index) {
-  const author = titleCase(csvField(cells, map, "author"));
-  const title = cleanTitleText(csvField(cells, map, "title"));
-  const doi = cleanDoi(csvField(cells, map, "doi"));
-  const isbn = normaliseIsbnList(csvField(cells, map, "isbn"));
+function rowFromTabularRecord(file, cells, map, index) {
+  const authorTitle = csvField(cells, map, "authorTitle");
+  const identity = authorTitleFromSource(authorTitle);
+  const suppliedBibliography = normaliseBibliographyLabels(csvField(cells, map, "bibliography"));
+  const bibliographyClues = extractFromBibliography({ Bibliography: suppliedBibliography });
+  const author = titleCase(csvField(cells, map, "author") || identity.author || bibliographyClues.Author);
+  const title = cleanTitleText(csvField(cells, map, "title") || identity.title || bibliographyClues.Title);
+  const doi = cleanDoi(csvField(cells, map, "doi") || bibliographyClues.DOI);
+  const isbn = normaliseIsbnList(csvField(cells, map, "isbn") || bibliographyClues.ISBN);
   const publisher = titleCase(csvField(cells, map, "publisher"));
   const pubdate = csvField(cells, map, "pubdate");
-  const year = yearFrom(pubdate);
-  const bibliography = normaliseBibliographyLabels(makeBibliography({ author, title, publisher, year, doi, isbn }));
+  const year = yearFrom(pubdate || suppliedBibliography || authorTitle);
+  const bibliography = suppliedBibliography || normaliseBibliographyLabels(makeBibliography({ author, title, publisher, year, doi, isbn }));
   const suggested = makeSuggestedFilename({ author, title, year });
-  const accuracy = author && title && (doi || isbn) ? "Medium" : author && title ? "Low" : "Zero";
-  return {
+  const imported = {
     Filename: file.name,
-    FilePath: `${file.path || file.name}#csv-${index + 1}`,
-    Extension: "csv",
+    FilePath: `${file.path || file.name}#table-${index + 1}`,
+    Extension: file.extension || "csv",
     Title: title,
     Author: author,
     DOI: doi,
@@ -172,20 +179,26 @@ function rowFromCsvRecord(file, cells, map, index) {
     "Suggested Filename": suggested,
     [MANUAL_AUTHOR_TITLE_FIELD]: "",
     Bibliography: bibliography,
-    Accuracy: accuracy,
-    Notes: "",
+    Accuracy: "",
+    Notes: csvField(cells, map, "notes"),
     Locked: false,
     PdfTextChecked: true,
   };
+  const cleaned = cleanEntry(imported);
+  return { ...cleaned, Accuracy: assessLocalAccuracy(cleaned) };
 }
 
-function rowsFromCsv(file, text) {
-  const parsed = parseCsv(text);
+function rowsFromTabularFile(file, text) {
+  const extension = String(file.extension || "").toLowerCase();
+  const delimiter = extension === "tsv" || extension === "tab" || (!String(text).includes(",") && String(text).includes("\t"))
+    ? "\t"
+    : ",";
+  const parsed = parseDelimitedText(text, delimiter);
   if (parsed.length < 2) return [];
   const [headers, ...records] = parsed;
   const map = csvColumnMap(headers);
   return records
-    .map((cells, index) => rowFromCsvRecord(file, cells, map, index))
+    .map((cells, index) => rowFromTabularRecord(file, cells, map, index))
     .filter((row) => row.Author || row.Title || row.DOI || row.ISBN);
 }
 
@@ -275,7 +288,7 @@ function rowFileKey(row) {
 
 function rowDuplicateKey(row) {
   const filePath = String(row.FilePath || "").toLowerCase();
-  if (filePath && !filePath.includes("#csv-")) return `path:${filePath}`;
+  if (filePath && !filePath.includes("#csv-") && !filePath.includes("#table-")) return `path:${filePath}`;
   const doi = cleanDoi(row.DOI);
   if (doi) return `doi:${doi}`;
   const isbn = splitIdentifiers(row.ISBN).sort().join("|");
@@ -1515,15 +1528,15 @@ function App() {
   async function addScannedFiles(files) {
     const existing = new Set(rows.map(rowDuplicateKey));
     const scannedRows = [];
-    let csvRows = 0;
+    let importedRows = 0;
     for (const file of Array.from(files)) {
       const extension = (file.extension || file.name.split(".").pop() || "").toLowerCase();
       if (!SUPPORTED_EXTENSIONS.has(extension)) continue;
-      if (extension === "csv" && file.path) {
+      if (TABULAR_EXTENSIONS.has(extension) && file.path) {
         try {
           const text = await invoke("read_text_file", { path: file.path });
-          const imported = rowsFromCsv(file, text);
-          csvRows += imported.length;
+          const imported = rowsFromTabularFile(file, text);
+          importedRows += imported.length;
           scannedRows.push(...imported);
         } catch {
           scannedRows.push(makeRow(file));
@@ -1557,7 +1570,7 @@ function App() {
       });
 
     setRows(next);
-    setStatus(`Scan complete. Added ${added} entries${csvRows ? `, including ${csvRows} from CSV` : ""}, updated ${updated} existing file paths. Total: ${next.length}.`);
+    setStatus(`Scan complete. Added ${added} entries${importedRows ? `, including ${importedRows} imported bibliography rows` : ""}, updated ${updated} existing file paths. Total: ${next.length}.`);
   }
 
   async function chooseFolderAndScan() {
