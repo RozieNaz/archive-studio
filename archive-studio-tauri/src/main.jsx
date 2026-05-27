@@ -254,6 +254,44 @@ function rowToText(row) {
   return EXPORT_COLUMNS.map((column) => `${displayLabel(column)}: ${cellValue(row, column)}`).join("\n");
 }
 
+function noteAuthor(value) {
+  const clean = stripJunk(value);
+  if (!clean.includes(",")) return clean;
+  const [last, ...rest] = clean.split(",").map((part) => part.trim()).filter(Boolean);
+  return [...rest, last].join(" ");
+}
+
+function chicagoParts(row) {
+  const identity = authorTitleFromSource(authorTitleDisplay(row));
+  const author = stripJunk(row.Author) || identity.author;
+  const title = cleanTitleText(row.Title || identity.title);
+  const year = yearFrom(row.Pubdate || row.Bibliography || row["Suggested Filename"] || row.Title);
+  const publisher = stripJunk(row.Publisher);
+  const doi = cleanDoi(row.DOI);
+  const isbn = normaliseIsbnList(row.ISBN).replace(/[.;]+$/g, "").trim();
+  return { author, title, year, publisher, doi, isbn };
+}
+
+function chicagoFullNote(row) {
+  const { author, title, year, publisher, doi, isbn } = chicagoParts(row);
+  const identity = [noteAuthor(author), title].filter(Boolean).join(", ");
+  const publication = [publisher, year].filter(Boolean).join(", ");
+  const publicationPart = publication ? ` (${publication})` : "";
+  const doiPart = doi ? ` DOI: ${doi}.` : "";
+  const isbnPart = !doi && isbn ? ` ISBN: ${isbn}.` : "";
+  return ensureFinalFullStop(`${identity}${publicationPart}.${doiPart}${isbnPart}`.replace(/\s+/g, " ").trim());
+}
+
+function chicagoBibliography(row) {
+  if (stripJunk(row.Bibliography)) return normaliseBibliographyLabels(row.Bibliography);
+  const { author, title, year, publisher, doi, isbn } = chicagoParts(row);
+  return makeBibliography({ author, title, year, publisher, doi, isbn });
+}
+
+function chicagoNoteAndBibliography(row) {
+  return `Footnote: ${chicagoFullNote(row)}\nBibliography: ${chicagoBibliography(row)}`;
+}
+
 function displayLabel(column) {
   return COLUMN_LABELS[column] || column;
 }
@@ -1539,7 +1577,8 @@ function App() {
   }, [selectedIndexes]);
 
   useEffect(() => {
-    const closeMenu = () => {
+    const closeMenu = (event) => {
+      if (event?.type === "keydown" && event.key !== "Escape") return;
       setFormatMenu(null);
       setOpenMenu("");
     };
@@ -1785,6 +1824,10 @@ function App() {
     return next;
   }
 
+  function keepEditorKeyInside(event) {
+    event.stopPropagation();
+  }
+
   function openFormatMenu(event, field) {
     if (event.currentTarget.selectionStart === event.currentTarget.selectionEnd) return;
     event.preventDefault();
@@ -1824,11 +1867,13 @@ function App() {
     const text = selectedRows
       .map((row) => {
         if (kind === "bibliography") return row.Bibliography || "";
+        if (kind === "footnote") return chicagoFullNote(row);
+        if (kind === "noteBibliography") return chicagoNoteAndBibliography(row);
         if (kind === "authorTitle") return authorTitleDisplay(row);
         return rowToText(row);
       })
       .filter(Boolean)
-      .join(kind === "entry" ? "\n\n" : "\n");
+      .join(kind === "entry" || kind === "noteBibliography" ? "\n\n" : "\n");
     if (!text) {
       setStatus("Nothing to copy for this selection.");
       return;
@@ -2186,6 +2231,8 @@ function App() {
             {openMenu === "copy" && (
               <div className="select-list">
                 <button onClick={() => chooseCopy("bibliography")}>Bibliography</button>
+                <button onClick={() => chooseCopy("footnote")}>Chicago Footnote</button>
+                <button onClick={() => chooseCopy("noteBibliography")}>Footnote + Bibliography</button>
                 <button onClick={() => chooseCopy("authorTitle")}>Author - Title</button>
                 <button onClick={() => chooseCopy("entry")}>Entry</button>
               </div>
@@ -2251,7 +2298,7 @@ function App() {
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
-                  <textarea value={editorFieldValue(editedSelected, column)} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                  <textarea value={editorFieldValue(editedSelected, column)} disabled={selected.Locked} onKeyDown={keepEditorKeyInside} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                 </label>
               ) : (
                 <label key={column}>
@@ -2273,14 +2320,14 @@ function App() {
                       )}
                     </div>
                   ) : (
-                    <input value={editorFieldValue(editedSelected, column)} disabled={selected.Locked || column === "Filename"} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={editorFieldValue(editedSelected, column)} disabled={selected.Locked || column === "Filename"} onKeyDown={keepEditorKeyInside} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )
             ))}
             <label>
               <span>Notes</span>
-              <textarea value={editedSelected.Notes || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
+              <textarea value={editedSelected.Notes || ""} disabled={selected.Locked} onKeyDown={keepEditorKeyInside} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
             </label>
             {checkSuggestion && checkSuggestion.index === selectedIndexes[0] && (
               <section className="ai-suggestion">

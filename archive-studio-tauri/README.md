@@ -17,7 +17,7 @@ This is the Tauri version of the app.
 - Edit author-title, DOI, ISBN, bibliography, accuracy, and notes in a draft; cancel unwanted changes or undo the last saved edit. The scanned filename is shown but not edited by cleanup or metadata fetch.
 - Review Quick Check and Gemini suggestions before applying them to an editable draft.
 - Use right-click formatting for bold and italic text in editable fields.
-- Copy bibliography, clean author-title, or full entry.
+- Copy bibliography, Chicago 17th-style full notes, note-and-bibliography pairs, clean author-title, or full entry.
 - Export entries to CSV.
 - Save work locally so entries remain available when the app is reopened.
 - Filter by locked, unlocked, zero or last-added entries, and sort verified accuracy while keeping Zero separate.
