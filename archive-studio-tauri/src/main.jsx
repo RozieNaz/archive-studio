@@ -452,8 +452,8 @@ async function postTextJson(url, text, timeoutMs = 3500) {
 }
 
 function geminiSuggestionRow(row, result) {
-  const author = titleCase(stripJunk(result.author || ""));
-  const title = cleanTitleText(result.title || "");
+  const author = titleCase(stripJunk(result.author || row.Author || ""));
+  const title = cleanTitleText(result.title || row.Title || "");
   const year = String(result.year || "").match(/\b(15|16|17|18|19|20)\d{2}\b/)?.[0] || "";
   const authorTitle = author && title ? makeSuggestedFilename({ author, title, year }) : "";
   const accuracy = ACCURACY_OPTIONS.includes(result.accuracy) ? result.accuracy : assessLocalAccuracy(row);
@@ -461,9 +461,9 @@ function geminiSuggestionRow(row, result) {
     ...row,
     Author: author,
     Title: title,
-    DOI: normaliseDoiField(result.doi || ""),
-    ISBN: normaliseIsbnField(result.isbn || ""),
-    Bibliography: ensureFinalFullStop(normaliseBibliographyLabels(cleanAiBibliography(result.bibliography || ""))),
+    DOI: normaliseDoiField(result.doi || row.DOI || ""),
+    ISBN: normaliseIsbnField(result.isbn || row.ISBN || ""),
+    Bibliography: ensureFinalFullStop(normaliseBibliographyLabels(cleanAiBibliography(result.bibliography || row.Bibliography || ""))),
     Accuracy: accuracy,
     "Suggested Filename": authorTitle || row["Suggested Filename"],
     [MANUAL_AUTHOR_TITLE_FIELD]: authorTitle || row[MANUAL_AUTHOR_TITLE_FIELD] || "",
@@ -471,7 +471,7 @@ function geminiSuggestionRow(row, result) {
   };
 }
 
-async function requestGeminiSuggestion(apiKey, row, pdfText) {
+async function requestGeminiSuggestion(apiKey, row, pdfText, lookupCandidate) {
   const evidence = {
     filename: row.Filename || "",
     currentAuthorTitle: authorTitleDisplay(row),
@@ -479,9 +479,18 @@ async function requestGeminiSuggestion(apiKey, row, pdfText) {
     currentIsbn: row.ISBN || "",
     currentBibliography: row.Bibliography || "",
     extractedPdfText: String(pdfText || "").slice(0, 16000),
+    lookupCandidate: lookupCandidate ? {
+      authorTitle: authorTitleDisplay(lookupCandidate),
+      doi: lookupCandidate.DOI || "",
+      isbn: lookupCandidate.ISBN || "",
+      bibliography: lookupCandidate.Bibliography || "",
+      accuracy: lookupCandidate.Accuracy || "",
+    } : null,
   };
   const prompt = `Refine a single academic bibliography record from the supplied evidence only.
-Do not invent an author, title, date, DOI or ISBN. Treat an existing field or filename as a clue unless supported by extracted PDF text or a consistent identifier.
+Archive Studio has already searched its embedded catalogue and public metadata sources. lookupCandidate is the strongest result found by that search; it is a candidate, not automatically correct.
+Do not invent an author, title, date, DOI or ISBN. Treat an existing field or filename as a clue unless supported by extracted PDF text or a lookupCandidate that clearly agrees with the work identity.
+When lookupCandidate agrees with the author and title, retain its DOI and ISBN in the output. When it conflicts with the document evidence, reject it and retain only supported current information.
 Format author-title as Author - Title (Year) when year is supported. Keep multiple ISBNs separated with semicolons.
 Produce a concise bibliography only when enough information exists. Accuracy must be High only for strongly supported identifiers or clear document evidence, Medium for substantial support, Low for partial clues, and Zero if author or title cannot be supported.
 
@@ -1360,7 +1369,7 @@ function metadataRowFromBest(row, best) {
   };
 }
 
-async function fetchMetadataForRow(row) {
+async function fetchMetadataForRow(row, { exhaustive = false } = {}) {
   const cleanedInput = cleanEntry(row);
   const query = cleanSearchQuery(cleanedInput.Title || cleanedInput["Suggested Filename"] || cleanedInput.Filename || cleanedInput.Bibliography);
   const authorTitle = authorTitleFromRow(cleanedInput);
@@ -1368,7 +1377,9 @@ async function fetchMetadataForRow(row) {
   const candidates = [];
   const localCandidates = searchLocalMetadataIndex(cleanedInput, query, authorTitle);
   const localBest = chooseBest(sourceIdentity, authorTitle.title || query, localCandidates, authorTitle);
-  if (localBest && localBest.score >= 70) return metadataRowFromBest(cleanedInput, localBest);
+  if (localBest && localBest.score >= 70 && (!exhaustive || localBest.doi || localBest.isbn || localBest.bibliography)) {
+    return metadataRowFromBest(cleanedInput, localBest);
+  }
   candidates.push(...localCandidates);
   for (const identifier of [cleanedInput.DOI, cleanedInput.ISBN].map(firstIdentifier).filter(Boolean)) {
     try {
@@ -1966,8 +1977,10 @@ function App() {
           pdfText = "";
         }
       }
+      setStatus("AI refine: searching metadata sources...");
+      const checked = await fetchMetadataForRow(enriched, { exhaustive: true });
       setStatus("AI refine: preparing suggestion...");
-      const suggestion = await requestGeminiSuggestion(geminiApiKey.trim(), enriched, pdfText);
+      const suggestion = await requestGeminiSuggestion(geminiApiKey.trim(), enriched, pdfText, checked);
       setGeminiSuggestion({ index: selectedIndex, row: suggestion });
       setStatus("AI suggestion ready. Review it before applying.");
     } catch (error) {
