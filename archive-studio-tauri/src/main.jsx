@@ -1828,6 +1828,23 @@ function App() {
     event.stopPropagation();
   }
 
+  function handleEditorKeyDown(event, field) {
+    if (event.defaultPrevented) return;
+    event.stopPropagation();
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key !== " " && event.key !== "Spacebar" && event.code !== "Space") return;
+
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? start;
+    const nextValue = `${target.value.slice(0, start)} ${target.value.slice(end)}`;
+    updateSelected(field, nextValue);
+    window.requestAnimationFrame(() => {
+      target.setSelectionRange(start + 1, start + 1);
+    });
+  }
+
   function openFormatMenu(event, field) {
     if (event.currentTarget.selectionStart === event.currentTarget.selectionEnd) return;
     event.preventDefault();
@@ -2298,7 +2315,7 @@ function App() {
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
-                  <textarea value={editorFieldValue(editedSelected, column)} disabled={selected.Locked} onKeyDown={keepEditorKeyInside} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                  <textarea value={editorFieldValue(editedSelected, column)} disabled={selected.Locked} onKeyDownCapture={(event) => handleEditorKeyDown(event, column)} onKeyDown={keepEditorKeyInside} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                 </label>
               ) : (
                 <label key={column}>
@@ -2320,14 +2337,14 @@ function App() {
                       )}
                     </div>
                   ) : (
-                    <input value={editorFieldValue(editedSelected, column)} disabled={selected.Locked || column === "Filename"} onKeyDown={keepEditorKeyInside} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={editorFieldValue(editedSelected, column)} disabled={selected.Locked || column === "Filename"} onKeyDownCapture={(event) => handleEditorKeyDown(event, column)} onKeyDown={keepEditorKeyInside} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )
             ))}
             <label>
               <span>Notes</span>
-              <textarea value={editedSelected.Notes || ""} disabled={selected.Locked} onKeyDown={keepEditorKeyInside} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
+              <textarea value={editedSelected.Notes || ""} disabled={selected.Locked} onKeyDownCapture={(event) => handleEditorKeyDown(event, NOTE_FIELD)} onKeyDown={keepEditorKeyInside} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
             </label>
             {checkSuggestion && checkSuggestion.index === selectedIndexes[0] && (
               <section className="ai-suggestion">
