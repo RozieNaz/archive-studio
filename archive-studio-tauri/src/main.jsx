@@ -7,6 +7,7 @@ import "./styles.css";
 const COLUMNS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const NOTE_FIELD = "Notes";
 const MANUAL_AUTHOR_TITLE_FIELD = "Manual Author - Title";
+const IMPORT_BATCH_FIELD = "Import Batch";
 const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
 const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
@@ -17,7 +18,7 @@ const TABULAR_EXTENSIONS = new Set(["csv", "tsv", "tab"]);
 const DEFAULT_WIDTHS = [300, 130, 130, 320, 105, 260];
 const MIN_WIDTHS = [120, 60, 60, 120, 85, 100];
 const COLLAPSED_WIDTH = 34;
-const ACCURACY_OPTIONS = ["", "High", "Medium", "Low", "Zero"];
+const ACCURACY_OPTIONS = ["High", "Medium", "Low", "Zero"];
 const STORAGE_KEY = "archive-studio-project";
 const CROSSREF_CONTACT_KEY = "archive-studio-crossref-contact";
 const GEMINI_API_KEY_STORAGE = "archive-studio-gemini-api-key";
@@ -274,6 +275,7 @@ function authorTitleDisplay(row) {
 
 function cellValue(row, column) {
   if (column === "Author - Title") return authorTitleDisplay(row);
+  if (column === "Accuracy") return accuracyValue(row);
   return column === "Bibliography" ? normaliseBibliographyLabels(row[column]) : row[column] || "";
 }
 
@@ -379,6 +381,13 @@ function loadLocalRows() {
   } catch {
     return [];
   }
+}
+
+function latestImportBatch(rows) {
+  return rows.reduce((latest, row) => {
+    const batch = String(row[IMPORT_BATCH_FIELD] || "");
+    return batch > latest ? batch : latest;
+  }, "");
 }
 
 function loadCrossrefContactEmail() {
@@ -934,7 +943,7 @@ function assessLocalAccuracy(row) {
 }
 
 function accuracyValue(row) {
-  return row.Accuracy || "Not Set";
+  return ACCURACY_RANK[row.Accuracy] == null ? "Zero" : row.Accuracy;
 }
 
 function waitForUi() {
@@ -1461,6 +1470,7 @@ function App() {
   const [undoChange, setUndoChange] = useState(null);
   const [isGeminiBusy, setIsGeminiBusy] = useState(false);
   const [accuracyFilter, setAccuracyFilter] = useState("All");
+  const [lastAddedBatch, setLastAddedBatch] = useState("");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
   const [openMenu, setOpenMenu] = useState("");
   const searchInput = useRef(null);
@@ -1476,26 +1486,33 @@ function App() {
   const selected = selectedIndexes.length === 1 ? selectedRows[0] : null;
   const editedSelected = selected && editorDraft?.index === selectedIndexes[0] ? editorDraft.row : selected;
   const selectedLocked = selectedRows.length > 0 && selectedRows.every((row) => row.Locked);
+  const currentLastAddedBatch = lastAddedBatch || latestImportBatch(rows);
   const visibleRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return rows
       .map((row, index) => ({ row, index }))
       .filter(({ row }) =>
-        (accuracyFilter === "All" || (accuracyFilter === "Locked" ? row.Locked : accuracyValue(row) === accuracyFilter)) &&
+        (accuracyFilter === "All" ||
+          (accuracyFilter === "Locked" ? row.Locked :
+            accuracyFilter === "Unlocked" ? !row.Locked :
+              accuracyFilter === "Last Added" ? row[IMPORT_BATCH_FIELD] === currentLastAddedBatch :
+              accuracyValue(row) === accuracyFilter)) &&
         (!query || EXPORT_COLUMNS.some((column) => String(cellValue(row, column) || "").toLowerCase().includes(query)))
       );
-  }, [rows, searchQuery, accuracyFilter]);
+  }, [rows, searchQuery, accuracyFilter, currentLastAddedBatch]);
   const counts = useMemo(() => {
     return rows.reduce(
       (summary, row) => {
         summary.total += 1;
         summary[accuracyValue(row)] += 1;
         if (row.Locked) summary.locked += 1;
+        else summary.unlocked += 1;
+        if (currentLastAddedBatch && row[IMPORT_BATCH_FIELD] === currentLastAddedBatch) summary.lastAdded += 1;
         return summary;
       },
-      { total: 0, High: 0, Medium: 0, Low: 0, Zero: 0, "Not Set": 0, locked: 0 }
+      { total: 0, High: 0, Medium: 0, Low: 0, Zero: 0, locked: 0, unlocked: 0, lastAdded: 0 }
     );
-  }, [rows]);
+  }, [rows, currentLastAddedBatch]);
 
   useEffect(() => {
     rowsRef.current = rows;
@@ -1560,6 +1577,7 @@ function App() {
   }
 
   async function addScannedFiles(files) {
+    const importBatch = String(Date.now());
     const existing = new Set(rows.map(rowDuplicateKey));
     const scannedRows = [];
     let importedRows = 0;
@@ -1586,7 +1604,7 @@ function App() {
     scannedRows.forEach((row) => {
         const key = rowDuplicateKey(row);
         if (!existing.has(key)) {
-          next.push(row);
+          next.push({ ...row, [IMPORT_BATCH_FIELD]: importBatch });
           existing.add(key);
           added += 1;
           return;
@@ -1604,6 +1622,11 @@ function App() {
       });
 
     setRows(next);
+    if (added > 0) {
+      setLastAddedBatch(importBatch);
+      setAccuracyFilter("Last Added");
+      setSelectedIndexes([]);
+    }
     setStatus(`Scan complete. Added ${added} entries${importedRows ? `, including ${importedRows} imported bibliography rows` : ""}, updated ${updated} existing file paths. Total: ${next.length}.`);
   }
 
@@ -1647,16 +1670,24 @@ function App() {
         : column === "Accuracy" ? "desc" : "asc";
     setRows((current) =>
       [...current].sort((left, right) => {
-        const a =
-          column === "Accuracy"
-            ? (ACCURACY_RANK[left[column]] ?? -1) - (ACCURACY_RANK[right[column]] ?? -1)
-            : String(cellValue(left, column) || "").localeCompare(String(cellValue(right, column) || ""), undefined, { sensitivity: "base" });
+        if (column === "Accuracy") {
+          const leftAccuracy = accuracyValue(left);
+          const rightAccuracy = accuracyValue(right);
+          if (leftAccuracy === "Zero" && rightAccuracy !== "Zero") return 1;
+          if (rightAccuracy === "Zero" && leftAccuracy !== "Zero") return -1;
+          const a = (ACCURACY_RANK[leftAccuracy] ?? 0) - (ACCURACY_RANK[rightAccuracy] ?? 0);
+          return direction === "asc" ? a : -a;
+        }
+        const a = String(cellValue(left, column) || "").localeCompare(String(cellValue(right, column) || ""), undefined, { sensitivity: "base" });
         return direction === "asc" ? a : -a;
       })
     );
     setSortConfig({ column, direction });
     setSelectedIndexes([]);
-    setStatus(`Sorted by ${displayLabel(column)} ${direction === "asc" ? "A-Z" : "Z-A"}.`);
+    const order = column === "Accuracy"
+      ? `${direction === "asc" ? "Low-High" : "High-Low"}; Zero separate`
+      : direction === "asc" ? "A-Z" : "Z-A";
+    setStatus(`Sorted by ${displayLabel(column)} ${order}.`);
   }
 
   async function fetchMetadata() {
@@ -1888,6 +1919,7 @@ function App() {
   async function openProject(file) {
     const payload = JSON.parse(await file.text());
     setRows(Array.isArray(payload.rows) ? normaliseSavedRows(payload.rows) : []);
+    setLastAddedBatch("");
     setSelectedIndexes([]);
     setStatus(`Opened project: ${file.name}`);
   }
@@ -1991,7 +2023,7 @@ function App() {
         .some((field) => String(finalRow[field] || "") !== String(row[field] || ""));
       if (changed) {
         setCheckSuggestion({ index: selectedIndex, row: finalRow });
-        setStatus(`Quick Check suggestion ready. Accuracy: ${finalRow.Accuracy || "Not Set"}.`);
+        setStatus(`Quick Check suggestion ready. Accuracy: ${accuracyValue(finalRow)}.`);
       } else {
         setStatus("Quick Check complete. No updates found.");
       }
@@ -2104,7 +2136,7 @@ function App() {
           <p className="status-line">{status}</p>
           {counts.total > 0 && (
             <div className="accuracy-summary" aria-label="Accuracy counts">
-              {["High", "Medium", "Low", "Zero", "Not Set"].map((value) => (
+              {["High", "Medium", "Low", "Zero"].map((value) => (
                 <button key={value} className={accuracyFilter === value ? "active" : ""} onClick={() => chooseAccuracyFilter(value)}>
                   {value}: {counts[value]}
                 </button>
@@ -2112,6 +2144,16 @@ function App() {
               {counts.locked > 0 && (
                 <button className={accuracyFilter === "Locked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Locked")}>
                   Locked: {counts.locked}
+                </button>
+              )}
+              {counts.unlocked > 0 && (
+                <button className={accuracyFilter === "Unlocked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Unlocked")}>
+                  Unlocked: {counts.unlocked}
+                </button>
+              )}
+              {counts.lastAdded > 0 && (
+                <button className={accuracyFilter === "Last Added" ? "active" : ""} onClick={() => chooseAccuracyFilter("Last Added")}>
+                  Last Added: {counts.lastAdded}
                 </button>
               )}
             </div>
@@ -2189,7 +2231,7 @@ function App() {
                   <span className="header-label">{collapsedSet.has(index) ? columnHint(column) : displayLabel(column)}</span>
                   {!collapsedSet.has(index) && sortConfig.column === column && (
                     <span className="sort-mark">
-                      {column === "Accuracy" ? (sortConfig.direction === "asc" ? "Worst" : "Best") : sortConfig.direction === "asc" ? "A-Z" : "Z-A"}
+                      {column === "Accuracy" ? (sortConfig.direction === "asc" ? "Low-High" : "High-Low") : sortConfig.direction === "asc" ? "A-Z" : "Z-A"}
                     </span>
                   )}
                   {!collapsedSet.has(index) && <span className="resize-handle" onMouseDown={(event) => beginResize(index, event)} />}
@@ -2227,12 +2269,12 @@ function App() {
                       <button disabled={selected.Locked} onClick={(event) => {
                         event.stopPropagation();
                         setOpenMenu(openMenu === "accuracy" ? "" : "accuracy");
-                      }}>{editedSelected[column] || "Not Set"} <span>⌄</span></button>
+                      }}>{accuracyValue(editedSelected)} <span>⌄</span></button>
                       {openMenu === "accuracy" && (
                         <div className="select-list">
                           {ACCURACY_OPTIONS.map((option) => (
-                            <button key={option || "not-set"} className={(editedSelected[column] || "") === option ? "selected-option" : ""} onClick={() => chooseAccuracy(option)}>
-                              {option || "Not Set"}
+                            <button key={option} className={accuracyValue(editedSelected) === option ? "selected-option" : ""} onClick={() => chooseAccuracy(option)}>
+                              {option}
                             </button>
                           ))}
                         </div>

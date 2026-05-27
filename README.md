@@ -33,7 +33,7 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 - Edit author-title, DOI, ISBN, bibliography, accuracy, and notes in a draft before saving; cancel unwanted changes or undo the last saved edit. The scanned filename is read-only.
 - Review Quick Check and Gemini suggestions before applying them to an editable draft.
 - Use right-click formatting for bold and italic text in editable fields.
-- Search entries, sort by author-title/filename/accuracy, resize columns, collapse columns, and wrap table text.
+- Search entries, filter by accuracy, lock state or the last added batch, sort verified accuracy while keeping Zero separate, resize columns, collapse columns, and wrap table text.
 - Select multiple entries with Ctrl for copy, lock, and delete workflows.
 - Copy bibliography, clean author-title, or entire entries.
 - Lock entries to protect them from editing, deleting, or clearing.
