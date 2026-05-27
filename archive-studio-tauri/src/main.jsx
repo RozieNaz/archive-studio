@@ -2136,26 +2136,18 @@ function App() {
           <p className="status-line">{status}</p>
           {counts.total > 0 && (
             <div className="accuracy-summary" aria-label="Accuracy counts">
-              {["High", "Medium", "Low", "Zero"].map((value) => (
-                <button key={value} className={accuracyFilter === value ? "active" : ""} onClick={() => chooseAccuracyFilter(value)}>
-                  {value}: {counts[value]}
-                </button>
-              ))}
-              {counts.locked > 0 && (
-                <button className={accuracyFilter === "Locked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Locked")}>
-                  Locked: {counts.locked}
-                </button>
-              )}
-              {counts.unlocked > 0 && (
-                <button className={accuracyFilter === "Unlocked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Unlocked")}>
-                  Unlocked: {counts.unlocked}
-                </button>
-              )}
-              {counts.lastAdded > 0 && (
-                <button className={accuracyFilter === "Last Added" ? "active" : ""} onClick={() => chooseAccuracyFilter("Last Added")}>
-                  Last Added: {counts.lastAdded}
-                </button>
-              )}
+              <button className={accuracyFilter === "Locked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Locked")}>
+                Locked: {counts.locked}
+              </button>
+              <button className={accuracyFilter === "Unlocked" ? "active" : ""} onClick={() => chooseAccuracyFilter("Unlocked")}>
+                Unlocked: {counts.unlocked}
+              </button>
+              <button className={accuracyFilter === "Zero" ? "active" : ""} onClick={() => chooseAccuracyFilter("Zero")}>
+                Zero: {counts.Zero}
+              </button>
+              <button className={accuracyFilter === "Last Added" ? "active" : ""} onClick={() => chooseAccuracyFilter("Last Added")}>
+                Last Added: {counts.lastAdded}
+              </button>
             </div>
           )}
         </div>

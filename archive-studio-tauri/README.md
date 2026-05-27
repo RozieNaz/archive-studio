@@ -20,7 +20,7 @@ This is the Tauri version of the app.
 - Copy bibliography, clean author-title, or full entry.
 - Export entries to CSV.
 - Save work locally so entries remain available when the app is reopened.
-- Filter by accuracy, lock state or the last added batch, and sort verified accuracy while keeping Zero separate.
+- Filter by locked, unlocked, zero or last-added entries, and sort verified accuracy while keeping Zero separate.
 - Sort by author-title and filename.
 - Search entries.
 - Resize and collapse columns.
