@@ -356,6 +356,7 @@ function Icon({ name }) {
     search: <><circle {...common} cx="10.5" cy="10.5" r="6.5" /><path {...common} d="m16 16 5 5" /></>,
     stop: <><circle {...common} cx="12" cy="12" r="9" /><rect {...common} x="8.5" y="8.5" width="7" height="7" rx="1" /></>,
     save: <><path {...common} d="M5 3h12l2 2v16H5z" /><path {...common} d="M8 3v6h8V3" /><path {...common} d="M8 21v-7h8v7" /></>,
+    undo: <><path {...common} d="M9 7 4 12l5 5" /><path {...common} d="M4 12h9a7 7 0 0 1 7 7" /></>,
     lock: <><rect {...common} x="5" y="10" width="14" height="10" rx="2" /><path {...common} d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
     unlock: <><rect {...common} x="5" y="10" width="14" height="10" rx="2" /><path {...common} d="M16 10V7a4 4 0 0 0-7.7-1.5" /></>,
     copy: <><rect {...common} x="8" y="8" width="11" height="11" rx="2" /><path {...common} d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" /></>,
@@ -1455,6 +1456,9 @@ function App() {
   const [geminiApiKey, setGeminiApiKey] = useState(loadGeminiApiKey);
   const [showGeminiSettings, setShowGeminiSettings] = useState(false);
   const [geminiSuggestion, setGeminiSuggestion] = useState(null);
+  const [checkSuggestion, setCheckSuggestion] = useState(null);
+  const [editorDraft, setEditorDraft] = useState(null);
+  const [undoChange, setUndoChange] = useState(null);
   const [isGeminiBusy, setIsGeminiBusy] = useState(false);
   const [accuracyFilter, setAccuracyFilter] = useState("All");
   const [collapsedColumns, setCollapsedColumns] = useState([]);
@@ -1470,6 +1474,7 @@ function App() {
   const tableWidth = activeWidths.reduce((sum, width) => sum + width, 0);
   const selectedRows = selectedIndexes.map((index) => rows[index]).filter(Boolean);
   const selected = selectedIndexes.length === 1 ? selectedRows[0] : null;
+  const editedSelected = selected && editorDraft?.index === selectedIndexes[0] ? editorDraft.row : selected;
   const selectedLocked = selectedRows.length > 0 && selectedRows.every((row) => row.Locked);
   const visibleRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -1505,6 +1510,16 @@ function App() {
     if (geminiApiKey.trim()) localStorage.setItem(GEMINI_API_KEY_STORAGE, geminiApiKey.trim());
     else localStorage.removeItem(GEMINI_API_KEY_STORAGE);
   }, [geminiApiKey]);
+
+  useEffect(() => {
+    if (selectedIndexes.length !== 1) {
+      setEditorDraft(null);
+      setCheckSuggestion(null);
+      return;
+    }
+    const index = selectedIndexes[0];
+    setEditorDraft((current) => current?.index === index ? current : { index, row: { ...rowsRef.current[index] } });
+  }, [selectedIndexes]);
 
   useEffect(() => {
     const closeMenu = () => {
@@ -1609,6 +1624,7 @@ function App() {
 
   function selectRow(index, event) {
     setGeminiSuggestion(null);
+    setCheckSuggestion(null);
     if (event.ctrlKey || event.metaKey) {
       setSelectedIndexes((current) =>
         current.includes(index) ? current.filter((item) => item !== index) : [...current, index]
@@ -1707,11 +1723,10 @@ function App() {
     if (field === "Filename") return;
     const selectedIndex = selectedIndexes[0];
     if (rows[selectedIndex]?.Locked) return;
-    setRows((current) =>
-      current.map((row, index) =>
-        index === selectedIndex ? updateRowField(row, field, value) : row
-      )
-    );
+    setEditorDraft((current) => {
+      const row = current?.index === selectedIndex ? current.row : rows[selectedIndex];
+      return { index: selectedIndex, row: updateRowField(row, field, value) };
+    });
   }
 
   function updateRowField(row, field, value) {
@@ -1757,16 +1772,14 @@ function App() {
     if (rows[selectedIndex]?.Locked) return;
     const field = formatMenu.field;
     if (field === "Filename") return;
-    setRows((current) =>
-      current.map((row, index) => {
-        if (index !== selectedIndex) return row;
-        const value = String(row[field] || "");
-        const before = value.slice(0, formatMenu.start);
-        const middle = value.slice(formatMenu.start, formatMenu.end);
-        const after = value.slice(formatMenu.end);
-        return { ...row, [field]: `${before}${marker}${middle}${marker}${after}` };
-      })
-    );
+    setEditorDraft((current) => {
+      const row = current?.index === selectedIndex ? current.row : rows[selectedIndex];
+      const value = String(field === "Author - Title" ? editorFieldValue(row, field) : row[field] || "");
+      const before = value.slice(0, formatMenu.start);
+      const middle = value.slice(formatMenu.start, formatMenu.end);
+      const after = value.slice(formatMenu.end);
+      return { index: selectedIndex, row: updateRowField(row, field, `${before}${marker}${middle}${marker}${after}`) };
+    });
     setFormatMenu(null);
     setStatus(marker === "**" ? "Bold formatting added." : "Italic formatting added.");
   }
@@ -1882,13 +1895,39 @@ function App() {
   function closeSelectedEntry() {
     if (selectedIndexes.length === 1 && !rows[selectedIndexes[0]]?.Locked) {
       const selectedIndex = selectedIndexes[0];
+      const previousRow = rows[selectedIndex];
+      const draftRow = editorDraft?.index === selectedIndex ? editorDraft.row : previousRow;
+      const savedRow = cleanEntry(draftRow);
       setRows((current) =>
-        current.map((row, index) => (index === selectedIndex ? cleanEntry(row) : row))
+        current.map((row, index) => (index === selectedIndex ? savedRow : row))
       );
+      setUndoChange({ key: rowFileKey(previousRow), row: previousRow });
     }
     setSelectedIndexes([]);
     setGeminiSuggestion(null);
+    setCheckSuggestion(null);
+    setEditorDraft(null);
     setStatus("Entry saved.");
+  }
+
+  function cancelSelectedEntry() {
+    setSelectedIndexes([]);
+    setGeminiSuggestion(null);
+    setCheckSuggestion(null);
+    setEditorDraft(null);
+    setStatus("Changes discarded.");
+  }
+
+  function undoLastChange() {
+    if (!undoChange) return;
+    setRows((current) =>
+      current.map((row) => rowFileKey(row) === undoChange.key ? undoChange.row : row)
+    );
+    if (selectedIndexes.length === 1 && rowFileKey(rows[selectedIndexes[0]]) === undoChange.key) {
+      setEditorDraft({ index: selectedIndexes[0], row: { ...undoChange.row } });
+    }
+    setUndoChange(null);
+    setStatus("Last saved edit undone.");
   }
 
   function chooseCopy(kind) {
@@ -1925,9 +1964,12 @@ function App() {
   async function quickCheckSelectedEntry() {
     if (selectedIndexes.length !== 1 || isFetching) return;
     const selectedIndex = selectedIndexes[0];
-    const row = rows[selectedIndex];
-    if (!row || row.Locked) return;
+    const originalRow = rows[selectedIndex];
+    const row = editorDraft?.index === selectedIndex ? editorDraft.row : originalRow;
+    if (!row || originalRow.Locked) return;
     setIsFetching(true);
+    setGeminiSuggestion(null);
+    setCheckSuggestion(null);
     try {
       setStatus("Quick Check: reading PDF text...");
       await waitForUi();
@@ -1945,17 +1987,15 @@ function App() {
       };
       const checked = await fetchMetadataForRow(lookupRow);
       const finalRow = mergeCheckedRow(row, cleaned, checked);
-      setRows((current) =>
-        current.map((item, index) => (index === selectedIndex ? finalRow : item))
-      );
       const changed = ["Title", "Author", "DOI", "ISBN", "Bibliography", "Suggested Filename", "Accuracy"]
         .some((field) => String(finalRow[field] || "") !== String(row[field] || ""));
-      setStatus(changed ? `Quick Check updated entry. Accuracy: ${finalRow.Accuracy || "Not Set"}.` : "Quick Check complete. No updates found.");
+      if (changed) {
+        setCheckSuggestion({ index: selectedIndex, row: finalRow });
+        setStatus(`Quick Check suggestion ready. Accuracy: ${finalRow.Accuracy || "Not Set"}.`);
+      } else {
+        setStatus("Quick Check complete. No updates found.");
+      }
     } catch {
-      const cleaned = cleanEntry(row);
-      setRows((current) =>
-        current.map((item, index) => (index === selectedIndex ? cleaned : item))
-      );
       setStatus("Quick Check failed. No updates found.");
     } finally {
       setIsFetching(false);
@@ -1965,8 +2005,9 @@ function App() {
   async function refineSelectedWithGemini() {
     if (selectedIndexes.length !== 1 || isFetching || isGeminiBusy) return;
     const selectedIndex = selectedIndexes[0];
-    const row = rows[selectedIndex];
-    if (!row || row.Locked) return;
+    const originalRow = rows[selectedIndex];
+    const row = editorDraft?.index === selectedIndex ? editorDraft.row : originalRow;
+    if (!row || originalRow.Locked) return;
     if (!geminiApiKey.trim()) {
       setShowGeminiSettings(true);
       setStatus("Add your Gemini API key first.");
@@ -1974,6 +2015,7 @@ function App() {
     }
     setIsGeminiBusy(true);
     setGeminiSuggestion(null);
+    setCheckSuggestion(null);
     try {
       setStatus("AI refine: reading available document text...");
       const enriched = await enrichRowWithPdfText({ ...row, PdfTextChecked: false });
@@ -2000,11 +2042,18 @@ function App() {
 
   function applyGeminiSuggestion() {
     if (!geminiSuggestion || selectedIndexes.length !== 1 || geminiSuggestion.index !== selectedIndexes[0]) return;
-    setRows((current) =>
-      current.map((row, index) => (index === geminiSuggestion.index && !row.Locked ? geminiSuggestion.row : row))
-    );
+    if (rows[geminiSuggestion.index]?.Locked) return;
+    setEditorDraft({ index: geminiSuggestion.index, row: geminiSuggestion.row });
     setGeminiSuggestion(null);
-    setStatus("AI suggestion applied. Tap Done to keep the entry.");
+    setStatus("AI suggestion added to draft. Tap Done to save it.");
+  }
+
+  function applyCheckSuggestion() {
+    if (!checkSuggestion || selectedIndexes.length !== 1 || checkSuggestion.index !== selectedIndexes[0]) return;
+    if (rows[checkSuggestion.index]?.Locked) return;
+    setEditorDraft({ index: checkSuggestion.index, row: checkSuggestion.row });
+    setCheckSuggestion(null);
+    setStatus("Quick Check suggestion added to draft. Tap Done to save it.");
   }
 
   useEffect(() => {
@@ -2028,6 +2077,11 @@ function App() {
         saveProject();
         return;
       }
+      if (commandKey && key === "z" && undoChange) {
+        event.preventDefault();
+        undoLastChange();
+        return;
+      }
       if (commandKey && key === "f") {
         event.preventDefault();
         searchInput.current?.focus();
@@ -2040,7 +2094,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedIndexes, rows, visibleRows]);
+  }, [selectedIndexes, rows, visibleRows, undoChange]);
 
   return (
     <main className={isDark ? "app dark" : "app"}>
@@ -2086,6 +2140,7 @@ function App() {
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
           <button title="Save" onClick={saveProject} disabled={!rows.length}><Icon name="save" /></button>
+          <button title="Undo Last Saved Edit" onClick={undoLastChange} disabled={!undoChange}><Icon name="undo" /></button>
           <button title={selectedRows.length ? (selectedLocked ? "Unlock Selected" : "Lock Selected") : "Lock Current Accuracy Filter"} onClick={toggleSelectedLocks} disabled={!selectedRows.length && accuracyFilter === "All"}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
           <button className="csv-button" title="Export CSV" onClick={exportCsv} disabled={!rows.length}>CSV</button>
           <button className={wrap ? "wrap-button active" : "wrap-button"} title="Wrap Text" onClick={() => setWrap((current) => !current)}>|↩|</button>
@@ -2155,14 +2210,14 @@ function App() {
           </div>
         </div>
 
-        {selected && (
+        {selected && editedSelected && (
           <aside className="editor">
             <h2>Selected Entry {selected.Locked ? "(Locked)" : ""}</h2>
             {EDITOR_FIELDS.map((column) => (
               column === "Bibliography" ? (
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
-                  <textarea value={editorFieldValue(selected, column)} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                  <textarea value={editorFieldValue(editedSelected, column)} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                 </label>
               ) : (
                 <label key={column}>
@@ -2172,11 +2227,11 @@ function App() {
                       <button disabled={selected.Locked} onClick={(event) => {
                         event.stopPropagation();
                         setOpenMenu(openMenu === "accuracy" ? "" : "accuracy");
-                      }}>{selected[column] || "Not Set"} <span>⌄</span></button>
+                      }}>{editedSelected[column] || "Not Set"} <span>⌄</span></button>
                       {openMenu === "accuracy" && (
                         <div className="select-list">
                           {ACCURACY_OPTIONS.map((option) => (
-                            <button key={option || "not-set"} className={(selected[column] || "") === option ? "selected-option" : ""} onClick={() => chooseAccuracy(option)}>
+                            <button key={option || "not-set"} className={(editedSelected[column] || "") === option ? "selected-option" : ""} onClick={() => chooseAccuracy(option)}>
                               {option || "Not Set"}
                             </button>
                           ))}
@@ -2184,15 +2239,26 @@ function App() {
                       )}
                     </div>
                   ) : (
-                    <input value={editorFieldValue(selected, column)} disabled={selected.Locked || column === "Filename"} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
+                    <input value={editorFieldValue(editedSelected, column)} disabled={selected.Locked || column === "Filename"} onContextMenu={column === "Filename" ? undefined : (event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
                   )}
                 </label>
               )
             ))}
             <label>
               <span>Notes</span>
-              <textarea value={selected.Notes || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
+              <textarea value={editedSelected.Notes || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
             </label>
+            {checkSuggestion && checkSuggestion.index === selectedIndexes[0] && (
+              <section className="ai-suggestion">
+                <h3>Quick Check Suggestion</h3>
+                <p>{authorTitleDisplay(checkSuggestion.row) || "No supported author-title found."}</p>
+                {checkSuggestion.row.Bibliography && <p>{checkSuggestion.row.Bibliography}</p>}
+                <div className="suggestion-actions">
+                  <button type="button" onClick={() => setCheckSuggestion(null)}>Discard</button>
+                  <button type="button" onClick={applyCheckSuggestion}>Apply</button>
+                </div>
+              </section>
+            )}
             {geminiSuggestion && geminiSuggestion.index === selectedIndexes[0] && (
               <section className="ai-suggestion">
                 <h3>AI Suggestion</h3>
@@ -2214,6 +2280,7 @@ function App() {
                   <button className="done-button" title="Quick Check Entry" disabled={isFetching} onClick={quickCheckSelectedEntry}><Icon name="checkSearch" /></button>
                 </>
               )}
+              <button className="done-button" title="Cancel Changes" onClick={cancelSelectedEntry}><Icon name="close" /></button>
               <button className="done-button" title="Done" onClick={closeSelectedEntry}><Icon name="done" /></button>
             </div>
           </aside>

@@ -30,7 +30,8 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 - Optionally use a user-supplied Gemini API key to review one entry with Google Search grounding after Archive Studio searches its local and public metadata sources.
 - Show a clean `Author - Title` work identity beside the untouched original filename.
 - Generate bibliography entries and mark accuracy as High, Medium, Low, or Zero.
-- Manually edit title, author, DOI, ISBN, bibliography, accuracy, and notes. The scanned filename is read-only.
+- Edit author-title, DOI, ISBN, bibliography, accuracy, and notes in a draft before saving; cancel unwanted changes or undo the last saved edit. The scanned filename is read-only.
+- Review Quick Check and Gemini suggestions before applying them to an editable draft.
 - Use right-click formatting for bold and italic text in editable fields.
 - Search entries, sort by author-title/filename/accuracy, resize columns, collapse columns, and wrap table text.
 - Select multiple entries with Ctrl for copy, lock, and delete workflows.

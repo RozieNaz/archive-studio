@@ -14,7 +14,8 @@ This is the Tauri version of the app.
 - Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, Open Library, and Internet Archive.
 - Use dedicated ISBN lookups through Google Books and Open Library when an ISBN is available.
 - Optionally use a user-supplied Gemini API key to review one entry with Google Search grounding after local and public metadata lookup.
-- Edit title, author, DOI, ISBN, bibliography, accuracy, and notes. The scanned filename is shown but not edited by cleanup or metadata fetch.
+- Edit author-title, DOI, ISBN, bibliography, accuracy, and notes in a draft; cancel unwanted changes or undo the last saved edit. The scanned filename is shown but not edited by cleanup or metadata fetch.
+- Review Quick Check and Gemini suggestions before applying them to an editable draft.
 - Use right-click formatting for bold and italic text in editable fields.
 - Copy bibliography, clean author-title, or full entry.
 - Export entries to CSV.
