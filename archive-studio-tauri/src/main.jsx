@@ -1810,7 +1810,23 @@ function App() {
       current.map((row, index) => (selectedSet.has(index) ? { ...row, Locked: nextLocked } : row))
     );
     setSelectedIndexes(indexes);
+    if (!nextLocked) {
+      setShowGeminiSettings(false);
+      setGeminiSuggestion(null);
+    }
     setStatus(`${nextLocked ? "Locked" : "Unlocked"} ${indexes.length} entr${indexes.length === 1 ? "y" : "ies"}.`);
+  }
+
+  function unlockSelectedEntry() {
+    if (selectedIndexes.length !== 1) return;
+    const selectedIndex = selectedIndexes[0];
+    if (!rows[selectedIndex]?.Locked) return;
+    setRows((current) =>
+      current.map((row, index) => (index === selectedIndex ? { ...row, Locked: false } : row))
+    );
+    setShowGeminiSettings(false);
+    setGeminiSuggestion(null);
+    setStatus("Entry unlocked.");
   }
 
   function clearUnlockedEntries() {
@@ -2156,8 +2172,14 @@ function App() {
               </section>
             )}
             <div className="editor-actions">
-              <button className="done-button" title="AI Refine Entry" disabled={selected.Locked || isFetching || isGeminiBusy} onClick={refineSelectedWithGemini}><Icon name="sparkle" /></button>
-              <button className="done-button" title="Quick Check Entry" disabled={selected.Locked || isFetching} onClick={quickCheckSelectedEntry}><Icon name="checkSearch" /></button>
+              {selected.Locked ? (
+                <button className="done-button" title="Unlock Entry" onClick={unlockSelectedEntry}><Icon name="unlock" /></button>
+              ) : (
+                <>
+                  <button className="done-button" title="AI Refine Entry" disabled={isFetching || isGeminiBusy} onClick={refineSelectedWithGemini}><Icon name="sparkle" /></button>
+                  <button className="done-button" title="Quick Check Entry" disabled={isFetching} onClick={quickCheckSelectedEntry}><Icon name="checkSearch" /></button>
+                </>
+              )}
               <button className="done-button" title="Done" onClick={closeSelectedEntry}><Icon name="done" /></button>
             </div>
           </aside>
