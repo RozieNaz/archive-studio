@@ -451,23 +451,44 @@ async function postTextJson(url, text, timeoutMs = 3500) {
   }
 }
 
-function geminiSuggestionRow(row, result) {
+function clampAiAccuracy(proposed, requested, grounded, lookupCandidate) {
+  if (!hasUsableIdentity(proposed)) return "Zero";
+  const hasIdentifier = hasReliableIdentifier(proposed);
+  const hasBibliography = Boolean(stripJunk(proposed.Bibliography));
+  const candidateHasIdentifier = hasReliableIdentifier(lookupCandidate);
+  const highSupported = hasIdentifier && hasBibliography && (grounded || (lookupCandidate?.Accuracy === "High" && candidateHasIdentifier));
+  const maximum = highSupported ? "High" : hasIdentifier && hasBibliography ? "Medium" : "Low";
+  const desired = ACCURACY_OPTIONS.includes(requested) && requested ? requested : maximum;
+  return (ACCURACY_RANK[desired] ?? 0) <= ACCURACY_RANK[maximum] ? desired : maximum;
+}
+
+function hasReliableIdentifier(row) {
+  const doi = cleanDoi(row?.DOI);
+  const hasDoi = /^10\.\d{4,9}\/\S+$/i.test(doi);
+  const hasIsbn = splitIdentifiers(row?.ISBN).some(isLikelyIsbn);
+  return hasDoi || hasIsbn;
+}
+
+function geminiSuggestionRow(row, result, groundingMetadata, lookupCandidate) {
   const author = titleCase(stripJunk(result.author || row.Author || ""));
   const title = cleanTitleText(result.title || row.Title || "");
   const year = String(result.year || "").match(/\b(15|16|17|18|19|20)\d{2}\b/)?.[0] || "";
   const authorTitle = author && title ? makeSuggestedFilename({ author, title, year }) : "";
-  const accuracy = ACCURACY_OPTIONS.includes(result.accuracy) ? result.accuracy : assessLocalAccuracy(row);
-  return {
+  const proposed = {
     ...row,
     Author: author,
     Title: title,
     DOI: normaliseDoiField(result.doi || row.DOI || ""),
     ISBN: normaliseIsbnField(result.isbn || row.ISBN || ""),
     Bibliography: ensureFinalFullStop(normaliseBibliographyLabels(cleanAiBibliography(result.bibliography || row.Bibliography || ""))),
-    Accuracy: accuracy,
     "Suggested Filename": authorTitle || row["Suggested Filename"],
     [MANUAL_AUTHOR_TITLE_FIELD]: authorTitle || row[MANUAL_AUTHOR_TITLE_FIELD] || "",
     AiReason: stripJunk(result.reason || ""),
+  };
+  const grounded = Boolean(groundingMetadata?.groundingChunks?.length || groundingMetadata?.webSearchQueries?.length);
+  return {
+    ...proposed,
+    Accuracy: clampAiAccuracy(proposed, result.accuracy, grounded, lookupCandidate),
   };
 }
 
@@ -487,12 +508,13 @@ async function requestGeminiSuggestion(apiKey, row, pdfText, lookupCandidate) {
       accuracy: lookupCandidate.Accuracy || "",
     } : null,
   };
-  const prompt = `Refine a single academic bibliography record from the supplied evidence only.
+  const prompt = `Search the web where necessary and refine a single academic bibliography record.
 Archive Studio has already searched its embedded catalogue and public metadata sources. lookupCandidate is the strongest result found by that search; it is a candidate, not automatically correct.
-Do not invent an author, title, date, DOI or ISBN. Treat an existing field or filename as a clue unless supported by extracted PDF text or a lookupCandidate that clearly agrees with the work identity.
-When lookupCandidate agrees with the author and title, retain its DOI and ISBN in the output. When it conflicts with the document evidence, reject it and retain only supported current information.
+Use reliable catalogue or publisher evidence, such as Crossref DOI pages, publisher pages, library catalogue records or Google Books records, to find missing year, DOI and ISBN. Do not invent an author, title, date, DOI or ISBN.
+Treat an existing field or filename as a clue unless supported by extracted PDF text, reliable web evidence or a lookupCandidate that clearly agrees with the work identity. When lookupCandidate agrees with the author and title, retain its DOI and ISBN in the output. When it conflicts with the document evidence, reject it and retain only supported current information.
 Format author-title as Author - Title (Year) when year is supported. Keep multiple ISBNs separated with semicolons.
-Produce a concise bibliography only when enough information exists. Accuracy must be High only for strongly supported identifiers or clear document evidence, Medium for substantial support, Low for partial clues, and Zero if author or title cannot be supported.
+Produce a concise bibliography only when enough information exists. Accuracy must be High only when a verified DOI or ISBN and bibliography are supported; confirming author-title alone is Low, not High.
+Respond as a JSON object only with these string fields: author, title, year, doi, isbn, bibliography, accuracy, reason.
 
 Evidence:
 ${JSON.stringify(evidence)}`;
@@ -508,23 +530,7 @@ ${JSON.stringify(evidence)}`;
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseJsonSchema: {
-            type: "object",
-            properties: {
-              author: { type: "string" },
-              title: { type: "string" },
-              year: { type: "string" },
-              doi: { type: "string" },
-              isbn: { type: "string" },
-              bibliography: { type: "string" },
-              accuracy: { type: "string", enum: ["High", "Medium", "Low", "Zero"] },
-              reason: { type: "string" },
-            },
-            required: ["author", "title", "year", "doi", "isbn", "bibliography", "accuracy", "reason"],
-          },
-        },
+        tools: [{ google_search: {} }],
       }),
     });
     if (!response.ok) {
@@ -534,7 +540,9 @@ ${JSON.stringify(evidence)}`;
     const payload = await response.json();
     const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
     if (!text) throw new Error("Gemini returned no suggestion.");
-    return geminiSuggestionRow(row, JSON.parse(text));
+    const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || "";
+    if (!jsonText) throw new Error("Gemini returned an unreadable suggestion.");
+    return geminiSuggestionRow(row, JSON.parse(jsonText), payload?.candidates?.[0]?.groundingMetadata, lookupCandidate);
   } catch (error) {
     if (error.name === "AbortError") throw new Error("Gemini request timed out.");
     throw error;
@@ -1979,7 +1987,7 @@ function App() {
       }
       setStatus("AI refine: searching metadata sources...");
       const checked = await fetchMetadataForRow(enriched, { exhaustive: true });
-      setStatus("AI refine: preparing suggestion...");
+      setStatus("AI refine: searching the web and preparing suggestion...");
       const suggestion = await requestGeminiSuggestion(geminiApiKey.trim(), enriched, pdfText, checked);
       setGeminiSuggestion({ index: selectedIndex, row: suggestion });
       setStatus("AI suggestion ready. Review it before applying.");

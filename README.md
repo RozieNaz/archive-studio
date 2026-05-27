@@ -27,7 +27,7 @@ irm https://raw.githubusercontent.com/RozieNaz/archive-studio/main/install-archi
 - Search an embedded topic-focused metadata index before falling back to public online sources.
 - Fetch metadata from public online sources including Crossref, OpenAlex, Google Books, Open Library, and Internet Archive when the local index is not reliable enough.
 - Use dedicated ISBN lookup through Google Books and Open Library when an ISBN is available.
-- Optionally use a user-supplied Gemini API key to review one entry after Archive Studio searches its local and public metadata sources.
+- Optionally use a user-supplied Gemini API key to review one entry with Google Search grounding after Archive Studio searches its local and public metadata sources.
 - Show a clean `Author - Title` work identity beside the untouched original filename.
 - Generate bibliography entries and mark accuracy as High, Medium, Low, or Zero.
 - Manually edit title, author, DOI, ISBN, bibliography, accuracy, and notes. The scanned filename is read-only.

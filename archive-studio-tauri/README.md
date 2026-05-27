@@ -13,7 +13,7 @@ This is the Tauri version of the app.
 - Search a compact embedded metadata index for relevant academic titles before falling back to online lookup.
 - Fetch metadata from public sources such as Crossref, OpenAlex, Google Books, Open Library, and Internet Archive.
 - Use dedicated ISBN lookups through Google Books and Open Library when an ISBN is available.
-- Optionally use a user-supplied Gemini API key to review one entry after local and public metadata lookup.
+- Optionally use a user-supplied Gemini API key to review one entry with Google Search grounding after local and public metadata lookup.
 - Edit title, author, DOI, ISBN, bibliography, accuracy, and notes. The scanned filename is shown but not edited by cleanup or metadata fetch.
 - Use right-click formatting for bold and italic text in editable fields.
 - Copy bibliography, clean author-title, or full entry.
