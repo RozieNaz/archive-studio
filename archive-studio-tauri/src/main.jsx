@@ -417,13 +417,17 @@ function Icon({ name }) {
 }
 
 function loadLocalRows() {
+  const payload = loadLocalProject();
+  return Array.isArray(payload.rows) ? normaliseSavedRows(payload.rows) : [];
+}
+
+function loadLocalProject() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return [];
-    const payload = JSON.parse(saved);
-    return Array.isArray(payload.rows) ? normaliseSavedRows(payload.rows) : [];
+    if (!saved) return {};
+    return JSON.parse(saved);
   } catch {
-    return [];
+    return {};
   }
 }
 
@@ -432,6 +436,25 @@ function latestImportBatch(rows) {
     const batch = String(row[IMPORT_BATCH_FIELD] || "");
     return batch > latest ? batch : latest;
   }, "");
+}
+
+function loadLastAddedBatch() {
+  const payload = loadLocalProject();
+  return String(payload.lastAddedBatch || latestImportBatch(Array.isArray(payload.rows) ? payload.rows : []));
+}
+
+function loadAccuracyFilter() {
+  const payload = loadLocalProject();
+  const filter = String(payload.accuracyFilter || "All");
+  return ["All", "Locked", "Unlocked", "Zero", "Last Added"].includes(filter) ? filter : "All";
+}
+
+function projectPayload(rows, lastAddedBatch, accuracyFilter) {
+  return {
+    rows,
+    lastAddedBatch: lastAddedBatch || latestImportBatch(rows),
+    accuracyFilter,
+  };
 }
 
 function loadCrossrefContactEmail() {
@@ -1513,8 +1536,8 @@ function App() {
   const [editorDraft, setEditorDraft] = useState(null);
   const [undoChange, setUndoChange] = useState(null);
   const [isGeminiBusy, setIsGeminiBusy] = useState(false);
-  const [accuracyFilter, setAccuracyFilter] = useState("All");
-  const [lastAddedBatch, setLastAddedBatch] = useState("");
+  const [accuracyFilter, setAccuracyFilter] = useState(loadAccuracyFilter);
+  const [lastAddedBatch, setLastAddedBatch] = useState(loadLastAddedBatch);
   const [collapsedColumns, setCollapsedColumns] = useState([]);
   const [openMenu, setOpenMenu] = useState("");
   const searchInput = useRef(null);
@@ -1560,8 +1583,8 @@ function App() {
 
   useEffect(() => {
     rowsRef.current = rows;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
-  }, [rows]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projectPayload(rows, currentLastAddedBatch, accuracyFilter)));
+  }, [rows, currentLastAddedBatch, accuracyFilter]);
 
   useEffect(() => {
     localStorage.setItem(CROSSREF_CONTACT_KEY, crossrefContact.trim());
@@ -1895,7 +1918,7 @@ function App() {
   }
 
   async function saveProject() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ rows }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(projectPayload(rows, currentLastAddedBatch, accuracyFilter)));
     if (!rows.length) {
       setStatus("Project saved on this device.");
       return;
