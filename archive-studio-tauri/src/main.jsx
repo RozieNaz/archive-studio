@@ -319,6 +319,7 @@ function cellValue(row, column) {
 
 function editorFieldValue(row, column) {
   if (column === "Author - Title") return row[MANUAL_AUTHOR_TITLE_FIELD] || row["Suggested Filename"] || authorTitleDisplay(row);
+  if (column === "Bibliography") return row.Bibliography || "";
   return cellValue(row, column);
 }
 
