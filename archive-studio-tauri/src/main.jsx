@@ -21,8 +21,6 @@ const COLLAPSED_WIDTH = 34;
 const ACCURACY_OPTIONS = ["High", "Medium", "Low", "Zero"];
 const STORAGE_KEY = "archive-studio-project";
 const CROSSREF_CONTACT_KEY = "archive-studio-crossref-contact";
-const GEMINI_API_KEY_STORAGE = "archive-studio-gemini-api-key";
-const GEMINI_MODEL = "gemini-2.5-flash";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "if", "in", "into", "nor", "of", "on", "or", "the", "to", "with"]);
 const NUMBER_WORDS = { one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10" };
 
@@ -465,21 +463,6 @@ function loadCrossrefContactEmail() {
   }
 }
 
-function loadGeminiApiKey() {
-  try {
-    return localStorage.getItem(GEMINI_API_KEY_STORAGE) || "";
-  } catch {
-    return "";
-  }
-}
-
-function cleanAiBibliography(value) {
-  return String(value || "")
-    .replace(/<\/?[^>]+>/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function crossrefContactEmail() {
   try {
     const value = localStorage.getItem(CROSSREF_CONTACT_KEY) || "";
@@ -523,106 +506,6 @@ async function postTextJson(url, text, timeoutMs = 3500) {
     });
     if (!response.ok) return null;
     return response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function clampAiAccuracy(proposed, requested, grounded, lookupCandidate) {
-  if (!hasUsableIdentity(proposed)) return "Zero";
-  const hasIdentifier = hasReliableIdentifier(proposed);
-  const hasBibliography = Boolean(stripJunk(proposed.Bibliography));
-  const candidateHasIdentifier = hasReliableIdentifier(lookupCandidate);
-  const highSupported = hasIdentifier && hasBibliography && (grounded || (lookupCandidate?.Accuracy === "High" && candidateHasIdentifier));
-  const maximum = highSupported ? "High" : hasIdentifier && hasBibliography ? "Medium" : "Low";
-  const desired = ACCURACY_OPTIONS.includes(requested) && requested ? requested : maximum;
-  return (ACCURACY_RANK[desired] ?? 0) <= ACCURACY_RANK[maximum] ? desired : maximum;
-}
-
-function hasReliableIdentifier(row) {
-  const doi = cleanDoi(row?.DOI);
-  const hasDoi = /^10\.\d{4,9}\/\S+$/i.test(doi);
-  const hasIsbn = splitIdentifiers(row?.ISBN).some(isLikelyIsbn);
-  return hasDoi || hasIsbn;
-}
-
-function geminiSuggestionRow(row, result, groundingMetadata, lookupCandidate) {
-  const author = titleCase(stripJunk(result.author || row.Author || ""));
-  const title = cleanTitleText(result.title || row.Title || "");
-  const year = String(result.year || "").match(/\b(15|16|17|18|19|20)\d{2}\b/)?.[0] || "";
-  const authorTitle = author && title ? makeSuggestedFilename({ author, title, year }) : "";
-  const proposed = {
-    ...row,
-    Author: author,
-    Title: title,
-    DOI: normaliseDoiField(result.doi || row.DOI || ""),
-    ISBN: normaliseIsbnField(result.isbn || row.ISBN || ""),
-    Bibliography: ensureFinalFullStop(normaliseBibliographyLabels(cleanAiBibliography(result.bibliography || row.Bibliography || ""))),
-    "Suggested Filename": authorTitle || row["Suggested Filename"],
-    [MANUAL_AUTHOR_TITLE_FIELD]: authorTitle || row[MANUAL_AUTHOR_TITLE_FIELD] || "",
-    AiReason: stripJunk(result.reason || ""),
-  };
-  const grounded = Boolean(groundingMetadata?.groundingChunks?.length || groundingMetadata?.webSearchQueries?.length);
-  return {
-    ...proposed,
-    Accuracy: clampAiAccuracy(proposed, result.accuracy, grounded, lookupCandidate),
-  };
-}
-
-async function requestGeminiSuggestion(apiKey, row, pdfText, lookupCandidate) {
-  const evidence = {
-    filename: row.Filename || "",
-    currentAuthorTitle: authorTitleDisplay(row),
-    currentDoi: row.DOI || "",
-    currentIsbn: row.ISBN || "",
-    currentBibliography: row.Bibliography || "",
-    extractedPdfText: String(pdfText || "").slice(0, 16000),
-    lookupCandidate: lookupCandidate ? {
-      authorTitle: authorTitleDisplay(lookupCandidate),
-      doi: lookupCandidate.DOI || "",
-      isbn: lookupCandidate.ISBN || "",
-      bibliography: lookupCandidate.Bibliography || "",
-      accuracy: lookupCandidate.Accuracy || "",
-    } : null,
-  };
-  const prompt = `Search the web where necessary and refine a single academic bibliography record.
-Archive Studio has already searched its embedded catalogue and public metadata sources. lookupCandidate is the strongest result found by that search; it is a candidate, not automatically correct.
-Use reliable catalogue or publisher evidence, such as Crossref DOI pages, publisher pages, library catalogue records or Google Books records, to find missing year, DOI and ISBN. Do not invent an author, title, date, DOI or ISBN.
-Treat an existing field or filename as a clue unless supported by extracted PDF text, reliable web evidence or a lookupCandidate that clearly agrees with the work identity. When lookupCandidate agrees with the author and title, retain its DOI and ISBN in the output. When it conflicts with the document evidence, reject it and retain only supported current information.
-Format author-title as Author - Title (Year) when year is supported. Keep multiple ISBNs separated with semicolons.
-Produce a concise bibliography only when enough information exists. Accuracy must be High only when a verified DOI or ISBN and bibliography are supported; confirming author-title alone is Low, not High.
-Respond as a JSON object only with these string fields: author, title, year, doi, isbn, bibliography, accuracy, reason.
-
-Evidence:
-${JSON.stringify(evidence)}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }],
-      }),
-    });
-    if (!response.ok) {
-      if (response.status === 400 || response.status === 403) throw new Error("Gemini key rejected or request not allowed.");
-      throw new Error("Gemini request failed.");
-    }
-    const payload = await response.json();
-    const text = payload?.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
-    if (!text) throw new Error("Gemini returned no suggestion.");
-    const jsonText = text.match(/\{[\s\S]*\}/)?.[0] || "";
-    if (!jsonText) throw new Error("Gemini returned an unreadable suggestion.");
-    return geminiSuggestionRow(row, JSON.parse(jsonText), payload?.candidates?.[0]?.groundingMetadata, lookupCandidate);
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("Gemini request timed out.");
-    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -1529,12 +1412,9 @@ function App() {
   const [formatMenu, setFormatMenu] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [crossrefContact, setCrossrefContact] = useState(loadCrossrefContactEmail);
-  const [geminiApiKey] = useState(loadGeminiApiKey);
-  const [geminiSuggestion, setGeminiSuggestion] = useState(null);
   const [checkSuggestion, setCheckSuggestion] = useState(null);
   const [editorDraft, setEditorDraft] = useState(null);
   const [undoChange, setUndoChange] = useState(null);
-  const [isGeminiBusy, setIsGeminiBusy] = useState(false);
   const [accuracyFilter, setAccuracyFilter] = useState(loadAccuracyFilter);
   const [lastAddedBatch, setLastAddedBatch] = useState(loadLastAddedBatch);
   const [collapsedColumns, setCollapsedColumns] = useState([]);
@@ -1708,7 +1588,6 @@ function App() {
   }
 
   function selectRow(index, event) {
-    setGeminiSuggestion(null);
     setCheckSuggestion(null);
     if (event.ctrlKey || event.metaKey) {
       setSelectedIndexes((current) =>
@@ -1937,7 +1816,6 @@ function App() {
 
   function toggleSelectedLocks(event) {
     event?.stopPropagation();
-    setGeminiSuggestion(null);
     setCheckSuggestion(null);
     const indexes = selectedIndexes.length
       ? selectedIndexes
@@ -1958,7 +1836,6 @@ function App() {
 
   function unlockSelectedEntry(event) {
     event?.stopPropagation();
-    setGeminiSuggestion(null);
     setCheckSuggestion(null);
     if (selectedIndexes.length !== 1) return;
     const selectedIndex = selectedIndexes[0];
@@ -2000,7 +1877,6 @@ function App() {
       setUndoChange({ key: rowFileKey(previousRow), row: previousRow });
     }
     setSelectedIndexes([]);
-    setGeminiSuggestion(null);
     setCheckSuggestion(null);
     setEditorDraft(null);
     setStatus("Entry saved.");
@@ -2008,7 +1884,6 @@ function App() {
 
   function cancelSelectedEntry() {
     setSelectedIndexes([]);
-    setGeminiSuggestion(null);
     setCheckSuggestion(null);
     setEditorDraft(null);
     setStatus("Changes discarded.");
@@ -2064,7 +1939,6 @@ function App() {
     const row = editorDraft?.index === selectedIndex ? editorDraft.row : originalRow;
     if (!row || originalRow.Locked) return;
     setIsFetching(true);
-    setGeminiSuggestion(null);
     setCheckSuggestion(null);
     try {
       setStatus("Quick Check: reading PDF text...");
@@ -2096,51 +1970,6 @@ function App() {
     } finally {
       setIsFetching(false);
     }
-  }
-
-  async function refineSelectedWithGemini() {
-    if (selectedIndexes.length !== 1 || isFetching || isGeminiBusy) return;
-    const selectedIndex = selectedIndexes[0];
-    const originalRow = rows[selectedIndex];
-    const row = editorDraft?.index === selectedIndex ? editorDraft.row : originalRow;
-    if (!row || originalRow.Locked) return;
-    if (!geminiApiKey.trim()) {
-      setStatus("AI refine needs a Gemini API key, so it is off in this build.");
-      return;
-    }
-    setIsGeminiBusy(true);
-    setGeminiSuggestion(null);
-    setCheckSuggestion(null);
-    try {
-      setStatus("AI refine: reading available document text...");
-      const enriched = await enrichRowWithPdfText({ ...row, PdfTextChecked: false });
-      let pdfText = "";
-      if (row.Extension === "pdf" && row.FilePath) {
-        try {
-          pdfText = await invoke("extract_pdf_text", { path: row.FilePath, maxPages: 5 });
-        } catch {
-          pdfText = "";
-        }
-      }
-      setStatus("AI refine: searching metadata sources...");
-      const checked = await fetchMetadataForRow(enriched, { exhaustive: true });
-      setStatus("AI refine: searching the web and preparing suggestion...");
-      const suggestion = await requestGeminiSuggestion(geminiApiKey.trim(), enriched, pdfText, checked);
-      setGeminiSuggestion({ index: selectedIndex, row: suggestion });
-      setStatus("AI suggestion ready. Review it before applying.");
-    } catch (error) {
-      setStatus(error.message || "AI refine failed.");
-    } finally {
-      setIsGeminiBusy(false);
-    }
-  }
-
-  function applyGeminiSuggestion() {
-    if (!geminiSuggestion || selectedIndexes.length !== 1 || geminiSuggestion.index !== selectedIndexes[0]) return;
-    if (rows[geminiSuggestion.index]?.Locked) return;
-    setEditorDraft({ index: geminiSuggestion.index, row: geminiSuggestion.row });
-    setGeminiSuggestion(null);
-    setStatus("AI suggestion added to draft. Tap Done to save it.");
   }
 
   function applyCheckSuggestion() {
@@ -2231,12 +2060,12 @@ function App() {
             value={crossrefContact}
             onChange={(event) => setCrossrefContact(event.target.value)}
           />
+          <button title={selectedRows.length ? (selectedLocked ? "Unlock Selected" : "Lock Selected") : "Lock Current Accuracy Filter"} onClick={toggleSelectedLocks} disabled={!selectedRows.length && accuracyFilter === "All"}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
           <button title="Open Folder" onClick={chooseFolderAndScan}><Icon name="folder" /></button>
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
           <button title="Save" onClick={saveProject} disabled={!rows.length}><Icon name="save" /></button>
           <button title="Undo Last Saved Edit" onClick={undoLastChange} disabled={!undoChange}><Icon name="undo" /></button>
-          <button title={selectedRows.length ? (selectedLocked ? "Unlock Selected" : "Lock Selected") : "Lock Current Accuracy Filter"} onClick={toggleSelectedLocks} disabled={!selectedRows.length && accuracyFilter === "All"}><Icon name={selectedLocked ? "unlock" : "lock"} /></button>
           <button className="csv-button" title="Export CSV" onClick={exportCsv} disabled={!rows.length}>CSV</button>
           <button className={wrap ? "wrap-button active" : "wrap-button"} title="Wrap Text" onClick={() => setWrap((current) => !current)}>|↩|</button>
           <div className="select-menu compact-select">
@@ -2342,26 +2171,11 @@ function App() {
                 </div>
               </section>
             )}
-            {geminiSuggestion && geminiSuggestion.index === selectedIndexes[0] && (
-              <section className="ai-suggestion">
-                <h3>AI Suggestion</h3>
-                <p>{authorTitleDisplay(geminiSuggestion.row) || "No supported author-title found."}</p>
-                {geminiSuggestion.row.Bibliography && <p>{geminiSuggestion.row.Bibliography}</p>}
-                {geminiSuggestion.row.AiReason && <p className="muted">{geminiSuggestion.row.AiReason}</p>}
-                <div className="suggestion-actions">
-                  <button type="button" onClick={() => setGeminiSuggestion(null)}>Discard</button>
-                  <button type="button" onClick={applyGeminiSuggestion}>Apply</button>
-                </div>
-              </section>
-            )}
             <div className="editor-actions">
               {selected.Locked ? (
                 <button className="done-button" title="Unlock Entry" onClick={unlockSelectedEntry}><Icon name="unlock" /></button>
               ) : (
-                <>
-                  <button className="done-button" title="AI Refine Entry" disabled={isFetching || isGeminiBusy} onClick={refineSelectedWithGemini}><Icon name="sparkle" /></button>
-                  <button className="done-button" title="Quick Check Entry" disabled={isFetching} onClick={quickCheckSelectedEntry}><Icon name="checkSearch" /></button>
-                </>
+                <button className="done-button" title="Quick Check Entry" disabled={isFetching} onClick={quickCheckSelectedEntry}><Icon name="checkSearch" /></button>
               )}
               <button className="done-button" title="Cancel Changes" onClick={cancelSelectedEntry}><Icon name="close" /></button>
               <button className="done-button" title="Done" onClick={closeSelectedEntry}><Icon name="done" /></button>
