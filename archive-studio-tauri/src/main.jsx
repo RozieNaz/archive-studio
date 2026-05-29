@@ -1529,8 +1529,7 @@ function App() {
   const [formatMenu, setFormatMenu] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [crossrefContact, setCrossrefContact] = useState(loadCrossrefContactEmail);
-  const [geminiApiKey, setGeminiApiKey] = useState(loadGeminiApiKey);
-  const [showGeminiSettings, setShowGeminiSettings] = useState(false);
+  const [geminiApiKey] = useState(loadGeminiApiKey);
   const [geminiSuggestion, setGeminiSuggestion] = useState(null);
   const [checkSuggestion, setCheckSuggestion] = useState(null);
   const [editorDraft, setEditorDraft] = useState(null);
@@ -1589,11 +1588,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem(CROSSREF_CONTACT_KEY, crossrefContact.trim());
   }, [crossrefContact]);
-
-  useEffect(() => {
-    if (geminiApiKey.trim()) localStorage.setItem(GEMINI_API_KEY_STORAGE, geminiApiKey.trim());
-    else localStorage.removeItem(GEMINI_API_KEY_STORAGE);
-  }, [geminiApiKey]);
 
   useEffect(() => {
     if (selectedIndexes.length !== 1) {
@@ -1943,7 +1937,6 @@ function App() {
 
   function toggleSelectedLocks(event) {
     event?.stopPropagation();
-    setShowGeminiSettings(false);
     setGeminiSuggestion(null);
     setCheckSuggestion(null);
     const indexes = selectedIndexes.length
@@ -1965,7 +1958,6 @@ function App() {
 
   function unlockSelectedEntry(event) {
     event?.stopPropagation();
-    setShowGeminiSettings(false);
     setGeminiSuggestion(null);
     setCheckSuggestion(null);
     if (selectedIndexes.length !== 1) return;
@@ -2113,8 +2105,7 @@ function App() {
     const row = editorDraft?.index === selectedIndex ? editorDraft.row : originalRow;
     if (!row || originalRow.Locked) return;
     if (!geminiApiKey.trim()) {
-      setShowGeminiSettings(true);
-      setStatus("Add your Gemini API key first.");
+      setStatus("AI refine needs a Gemini API key, so it is off in this build.");
       return;
     }
     setIsGeminiBusy(true);
@@ -2240,7 +2231,6 @@ function App() {
             value={crossrefContact}
             onChange={(event) => setCrossrefContact(event.target.value)}
           />
-          <button title="Gemini API Key" onClick={() => setShowGeminiSettings((current) => !current)}><Icon name="key" /></button>
           <button title="Open Folder" onClick={chooseFolderAndScan}><Icon name="folder" /></button>
           <button title="Fetch Metadata" onClick={fetchMetadata} disabled={!rows.length || isFetching}><Icon name="search" /></button>
           <button title="Stop Fetch" onClick={stopCurrentJob} disabled={!isFetching}><Icon name="stop" /></button>
@@ -2272,16 +2262,6 @@ function App() {
         </div>
         <input ref={projectInput} hidden type="file" accept=".json,.archive-studio.json" onChange={(event) => event.target.files?.[0] && openProject(event.target.files[0])} />
       </header>
-      {showGeminiSettings && (
-        <section className="gemini-settings" aria-label="Gemini settings">
-          <label>
-            <span>Gemini API Key (Stored On This Device Only)</span>
-            <input type="password" value={geminiApiKey} placeholder="Paste your Gemini API key" onChange={(event) => setGeminiApiKey(event.target.value)} />
-          </label>
-          <button className="settings-close" title="Close Gemini Settings" onClick={() => setShowGeminiSettings(false)}><Icon name="close" /></button>
-        </section>
-      )}
-
       <section className={selected ? "workspace has-editor" : "workspace"}>
         <div className={wrap ? "table wrap" : "table"}>
           <div className="table-scroll">
