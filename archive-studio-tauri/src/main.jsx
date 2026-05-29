@@ -9,7 +9,7 @@ const NOTE_FIELD = "Notes";
 const MANUAL_AUTHOR_TITLE_FIELD = "Manual Author - Title";
 const IMPORT_BATCH_FIELD = "Import Batch";
 const EXPORT_COLUMNS = [...COLUMNS, NOTE_FIELD];
-const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", "Filename"];
+const EDITOR_FIELDS = ["Author - Title", "DOI", "ISBN", "Bibliography", "Accuracy", NOTE_FIELD, "Filename"];
 const COLUMN_LABELS = { DOI: "DOI", ISBN: "ISBN" };
 const SORTABLE_COLUMNS = new Set(["Author - Title", "Accuracy", "Filename"]);
 const ACCURACY_RANK = { Zero: 0, Low: 1, Medium: 2, High: 3 };
@@ -1941,7 +1941,11 @@ function App() {
     setStatus(`Deleted ${deletedCount} entr${deletedCount === 1 ? "y" : "ies"}.`);
   }
 
-  function toggleSelectedLocks() {
+  function toggleSelectedLocks(event) {
+    event?.stopPropagation();
+    setShowGeminiSettings(false);
+    setGeminiSuggestion(null);
+    setCheckSuggestion(null);
     const indexes = selectedIndexes.length
       ? selectedIndexes
       : accuracyFilter === "All" ? [] : visibleRows.map(({ index }) => index);
@@ -1956,22 +1960,20 @@ function App() {
       current.map((row, index) => (selectedSet.has(index) ? { ...row, Locked: nextLocked } : row))
     );
     setSelectedIndexes(indexes);
-    if (!nextLocked) {
-      setShowGeminiSettings(false);
-      setGeminiSuggestion(null);
-    }
     setStatus(`${nextLocked ? "Locked" : "Unlocked"} ${indexes.length} entr${indexes.length === 1 ? "y" : "ies"}.`);
   }
 
-  function unlockSelectedEntry() {
+  function unlockSelectedEntry(event) {
+    event?.stopPropagation();
+    setShowGeminiSettings(false);
+    setGeminiSuggestion(null);
+    setCheckSuggestion(null);
     if (selectedIndexes.length !== 1) return;
     const selectedIndex = selectedIndexes[0];
     if (!rows[selectedIndex]?.Locked) return;
     setRows((current) =>
       current.map((row, index) => (index === selectedIndex ? { ...row, Locked: false } : row))
     );
-    setShowGeminiSettings(false);
-    setGeminiSuggestion(null);
     setStatus("Entry unlocked.");
   }
 
@@ -2319,7 +2321,7 @@ function App() {
           <aside className="editor">
             <h2>Selected Entry {selected.Locked ? "(Locked)" : ""}</h2>
             {EDITOR_FIELDS.map((column) => (
-              column === "Bibliography" ? (
+              column === "Bibliography" || column === NOTE_FIELD ? (
                 <label key={column}>
                   <span>{displayLabel(column)}</span>
                   <textarea value={editorFieldValue(editedSelected, column)} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, column)} onChange={(event) => updateSelected(column, event.target.value)} />
@@ -2349,10 +2351,6 @@ function App() {
                 </label>
               )
             ))}
-            <label>
-              <span>Notes</span>
-              <textarea value={editedSelected.Notes || ""} disabled={selected.Locked} onContextMenu={(event) => openFormatMenu(event, NOTE_FIELD)} onChange={(event) => updateSelected(NOTE_FIELD, event.target.value)} />
-            </label>
             {checkSuggestion && checkSuggestion.index === selectedIndexes[0] && (
               <section className="ai-suggestion">
                 <h3>Quick Check Suggestion</h3>
